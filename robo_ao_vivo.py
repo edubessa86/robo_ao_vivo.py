@@ -10,6 +10,15 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
+# Validação prévia de segurança para identificar chaves ausentes
+if not GEMINI_API_KEY:
+    print("❌ ERRO CRÍTICO: A secret 'GEMINI_API_KEY' não foi encontrada ou está vazia.")
+    exit(1)
+
+if not TELEGRAM_TOKEN or not CHAT_ID:
+    print("❌ ERRO CRÍTICO: As secrets do Telegram (TELEGRAM_TOKEN ou CHAT_ID) não foram encontradas.")
+    exit(1)
+
 # Inicializa o cliente oficial moderno do Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -59,7 +68,7 @@ Atenção: Utilize apenas dados reais de partidas ao vivo. Nunca invente confron
     while tentativa < max_tentativas:
         try:
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.6-flash",
                 contents=prompt_mestre,
             )
             relatorio = response.text
