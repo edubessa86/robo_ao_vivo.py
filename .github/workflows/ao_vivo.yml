@@ -1,7 +1,6 @@
 name: Robô Ao Vivo (Manual)
 
 on:
-  # Configurado estritamente para execução manual sob demanda durante os jogos
   workflow_dispatch:
 
 jobs:
@@ -17,10 +16,11 @@ jobs:
       with:
         python-version: "3.10"
 
-    - name: Instalar dependências necessárias
+    - name: Limpar e Instalar Dependências Corretas
       run: |
         python -m pip install --upgrade pip
-        pip install requests google-generativeai
+        pip uninstall -y google-generativeai google
+        pip install requests google-genai
 
     - name: Executar o Robô Ao Vivo
       env:
