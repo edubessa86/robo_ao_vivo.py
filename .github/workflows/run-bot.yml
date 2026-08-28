@@ -1,0 +1,44 @@
+name: Bot de apostas ao vivo - Futebol
+
+# Só roda quando você clicar manualmente em "Run workflow" na aba Actions.
+on:
+  workflow_dispatch:
+    inputs:
+      confidence_threshold:
+        description: "Confiança mínima do modelo para alertar (%)"
+        required: false
+        default: "70"
+      max_fixtures:
+        description: "Número máximo de jogos ao vivo a analisar nesta execução"
+        required: false
+        default: "8"
+      require_positive_edge:
+        description: "Só alertar se também houver valor esperado positivo frente à odd (true/false)"
+        required: false
+        default: "false"
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar o bot
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CONFIDENCE_THRESHOLD: ${{ github.event.inputs.confidence_threshold }}
+          MAX_FIXTURES: ${{ github.event.inputs.max_fixtures }}
+          REQUIRE_POSITIVE_EDGE: ${{ github.event.inputs.require_positive_edge }}
+        run: python main.py
