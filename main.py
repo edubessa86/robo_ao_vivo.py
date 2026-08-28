@@ -261,6 +261,12 @@ def process_fixture(fixture):
     home_goals = fixture["goals"]["home"] or 0
     away_goals = fixture["goals"]["away"] or 0
 
+    # Filtro para ignorar jogos avançados e já decididos (evita alertas desnecessários no fim)
+    goal_diff = abs(home_goals - away_goals)
+    if elapsed > 78 and goal_diff >= 2:
+        print(f"  - {fixture['teams']['home']['name']} x {fixture['teams']['away']['name']}: ignorado (jogo decidido, {home_goals}x{away_goals} aos {elapsed}').")
+        return
+
     stats_response = get_statistics(fixture_id)
     time.sleep(REQUEST_DELAY)
     if len(stats_response) < 2:
