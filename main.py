@@ -1,31 +1,3 @@
-"""
-BetFootBot — Monitor de jogos de futebol AO VIVO com estimativa de confiança
-via modelo estatístico simplificado (Poisson) + leitura qualitativa via Gemini,
-com alertas enviados para o Telegram.
-
-Fontes usadas:
-  - API-Football (v3.football.api-sports.io) para jogos ao vivo, estatísticas
-    e odds ao vivo.
-  - Gemini API (Google) para gerar uma explicação em texto, em cima dos
-    números já calculados (o Gemini NÃO decide a probabilidade, só explica).
-  - Telegram Bot API para enviar o alerta para você.
-
-IMPORTANTE — leia antes de usar:
-  Este script calcula uma ESTIMATIVA baseada em um modelo estatístico simples
-  (extrapolação de xG / finalizações no alvo via distribuição de Poisson).
-  Não é uma previsão garantida, e nenhum sistema consegue garantir uma taxa
-  fixa de acerto (nem 70%, nem nenhuma outra). O número mostrado é a
-  confiança do MODELO, não uma promessa de resultado.
-  Aposte apenas em operadoras licenciadas no Brasil, defina um limite de
-  banca antes de começar e nunca tente "recuperar" perdas. Se em algum
-  momento sentir que está perdendo o controle sobre o quanto aposta, o CVV
-  (188, gratuito, 24h) oferece apoio emocional.
-
-Uso:
-    python main.py
-Variáveis de ambiente necessárias: ver .env.example
-"""
-
 import os
 import time
 import math
@@ -56,7 +28,7 @@ GEMINI_API_KEY = _require("GEMINI_API_KEY")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "70"))
 REQUIRE_POSITIVE_EDGE = os.environ.get("REQUIRE_POSITIVE_EDGE", "false").lower() == "true"
-LEAGUE_FILTER = os.environ.get("LEAGUE_IDS", "").strip()          # ex: "39,140,71"
+LEAGUE_FILTER = os.environ.get("LEAGUE_IDS", "").strip()         # ex: "39,140,71"
 SOT_CONVERSION_FACTOR = float(os.environ.get("SOT_CONVERSION_FACTOR", "0.30"))
 MAX_FIXTURES = int(os.environ.get("MAX_FIXTURES", "8"))
 REQUEST_DELAY = float(os.environ.get("REQUEST_DELAY_SECONDS", "6"))
@@ -113,27 +85,26 @@ def extract_stat(stats_block, name):
 
 
 def parse_team_stats(stats_response):
-    """Retorna {team_id: {finalizações no alvo, posse, cartões vermelhos, xG}}."""
+    """Retorna estatísticas detalhadas por time para todos os mercados solicitados."""
     parsed = {}
     for team_block in stats_response:
         team_id = team_block["team"]["id"]
         stats = team_block["statistics"]
         parsed[team_id] = {
+            "total_shots": extract_stat(stats, "Total Shots"),
             "shots_on_target": extract_stat(stats, "Shots on Goal"),
-            "possession": extract_stat(stats, "Ball Possession"),
+            "corner_kicks": extract_stat(stats, "Corner Kicks"),
+            "fouls": extract_stat(stats, "Fouls"),
+            "yellow_cards": extract_stat(stats, "Yellow Cards"),
             "red_cards": extract_stat(stats, "Red Cards"),
+            "possession": extract_stat(stats, "Ball Possession"),
             "expected_goals": extract_stat(stats, "expected_goals"),
         }
     return parsed
 
 
 def extract_1x2_live_odds(odds_response):
-    """Extrai as odds ao vivo de 1X2 do primeiro bookmaker com a linha ativa.
-
-    OBS: a estrutura exata de /odds/live pode variar por plano/conta. Se não
-    funcionar de primeira, rode uma vez com `print(odds_response)` e ajuste
-    os nomes de campo abaixo conforme o retorno real da sua chave.
-    """
+    """Extrai as odds ao vivo de 1X2 do primeiro bookmaker com a linha ativa."""
     for entry in odds_response:
         bookmakers = entry.get("odds") or entry.get("bookmakers") or []
         for bookmaker in bookmakers:
@@ -150,7 +121,7 @@ def extract_1x2_live_odds(odds_response):
 
 
 # ---------------------------------------------------------------------------
-# Modelo estatístico (Poisson simplificado)
+# Modelo estatístico (Poisson + Projeção de Métricas)
 # ---------------------------------------------------------------------------
 def poisson_pmf(k, lam):
     if lam <= 0:
@@ -159,13 +130,6 @@ def poisson_pmf(k, lam):
 
 
 def estimate_additional_goals(team_stats, elapsed_minutes, remaining_minutes):
-    """Estima gols adicionais esperados até o fim do jogo.
-
-    Usa xG ao vivo quando a liga fornece; senão, extrapola pela taxa de
-    finalizações no alvo por minuto, aplicando um fator de conversão médio
-    (SOT_CONVERSION_FACTOR). É uma simplificação deliberada — não substitui
-    um modelo calibrado com dados históricos reais por liga/time.
-    """
     elapsed_minutes = max(elapsed_minutes, 1)
 
     xg = team_stats.get("expected_goals", 0)
@@ -181,9 +145,14 @@ def estimate_additional_goals(team_stats, elapsed_minutes, remaining_minutes):
     return max(rate_per_min * remaining_minutes, 0.01)
 
 
+def project_count_stat(current_value, elapsed_minutes):
+    """Projeta estatísticas de contagem (escanteios, faltas, cartões, finalizações) para 90 minutos."""
+    if elapsed_minutes <= 0:
+        return 0.0
+    return current_value * (90 / elapsed_minutes)
+
+
 def match_outcome_probabilities(home_goals, away_goals, lam_home, lam_away, max_goals=8):
-    """Probabilidade de vitória do mandante / empate / vitória do visitante
-    ao final do jogo, combinando placar atual (fixo) + Poisson dos gols futuros."""
     p_home, p_draw, p_away = 0.0, 0.0, 0.0
     for i in range(max_goals + 1):
         for j in range(max_goals + 1):
@@ -211,9 +180,8 @@ def ask_gemini_analysis(context_text):
         "Você é um analista de futebol objetivo e cauteloso. Com base SOMENTE "
         "nos dados abaixo (não invente nenhuma estatística que não foi fornecida), "
         "escreva em português, em até 3 frases curtas: (1) o principal motivo "
-        "estatístico por trás da estimativa e (2) um alerta rápido de risco caso "
-        "exista (ex.: jogo pode virar, time jogando com um a menos, amostra pequena "
-        "por ser início de jogo, etc.).\n\n"
+        "estatístico por trás da estimativa (considerando gols, finalizações e volume geral) "
+        "e (2) um alerta rápido de risco caso exista.\n\n"
         f"{context_text}"
     )
     body = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -241,7 +209,7 @@ def send_telegram_message(text):
         print(f"[Telegram] erro ao enviar mensagem: {resp.text}")
 
 
-def format_alert(fixture, outcome_label, model_prob, odd, implied_prob, gemini_text):
+def format_alert(fixture, outcome_label, model_prob, odd, implied_prob, gemini_text, proj_data):
     home = fixture["teams"]["home"]["name"]
     away = fixture["teams"]["away"]["name"]
     minute = fixture["fixture"]["status"]["elapsed"]
@@ -252,14 +220,26 @@ def format_alert(fixture, outcome_label, model_prob, odd, implied_prob, gemini_t
         f"⚽ *{home} {score} {away}*",
         f"🏆 {league} — {minute}'",
         f"📊 Estimativa do modelo para *{outcome_label}*: *{model_prob*100:.1f}%*",
+        "",
+        "📈 *Projeções Estatísticas para o Fim do Jogo (90'):*",
+        f"• Gols Totais Esperados: {proj_data['gols_totais']:.2f}",
+        f"• Finalizações Totais: {proj_data['finalizacoes_totais']:.1f}",
+        f"• Chutes no Alvo Totais: {proj_data['chutes_alvo_totais']:.1f}",
+        f"• Escanteios Totais: {proj_data['escanteios_totais']:.1f}",
+        f"• Faltas Totais: {proj_data['faltas_totais']:.1f}",
+        f"• Cartões Totais: {proj_data['cartoes_totais']:.1f}",
     ]
+
     if odd:
         edge = model_prob - implied_prob
+        lines.append("")
         lines.append(f"💰 Odd ao vivo: {odd:.2f} (prob. implícita ≈ {implied_prob*100:.1f}%)")
         lines.append(f"📈 Edge estimado: {edge*100:+.1f} p.p.")
     else:
+        lines.append("")
         lines.append("💰 Odd ao vivo não disponível para essa liga/plano no momento.")
 
+    lines.append("")
     lines.append(f"🧠 {gemini_text}")
     lines.append("")
     lines.append(
@@ -288,8 +268,11 @@ def process_fixture(fixture):
         return
 
     team_stats = parse_team_stats(stats_response)
-    lam_home = estimate_additional_goals(team_stats.get(home_id, {}), elapsed, remaining)
-    lam_away = estimate_additional_goals(team_stats.get(away_id, {}), elapsed, remaining)
+    home_st = team_stats.get(home_id, {})
+    away_st = team_stats.get(away_id, {})
+
+    lam_home = estimate_additional_goals(home_st, elapsed, remaining)
+    lam_away = estimate_additional_goals(away_st, elapsed, remaining)
 
     p_home, p_draw, p_away = match_outcome_probabilities(home_goals, away_goals, lam_home, lam_away)
     outcomes = {
@@ -298,6 +281,19 @@ def process_fixture(fixture):
         "Vitória do visitante": p_away,
     }
     best_label, best_prob = max(outcomes.items(), key=lambda kv: kv[1])
+
+    # Consolidação das projeções para os mercados solicitados
+    proj_data = {
+        "gols_totais": (home_goals + away_goals) + lam_home + lam_away,
+        "finalizacoes_totais": project_count_stat(home_st.get("total_shots", 0) + away_st.get("total_shots", 0), elapsed),
+        "chutes_alvo_totais": project_count_stat(home_st.get("shots_on_target", 0) + away_st.get("shots_on_target", 0), elapsed),
+        "escanteios_totais": project_count_stat(home_st.get("corner_kicks", 0) + away_st.get("corner_kicks", 0), elapsed),
+        "faltas_totais": project_count_stat(home_st.get("fouls", 0) + away_st.get("fouls", 0), elapsed),
+        "cartoes_totais": project_count_stat(
+            (home_st.get("yellow_cards", 0) + home_st.get("red_cards", 0)) +
+            (away_st.get("yellow_cards", 0) + away_st.get("red_cards", 0)), elapsed
+        ),
+    }
 
     print(f"  - {fixture['teams']['home']['name']} {home_goals}x{away_goals} {fixture['teams']['away']['name']} ({elapsed}'): {best_label} = {best_prob*100:.1f}%")
 
@@ -321,18 +317,19 @@ def process_fixture(fixture):
     context_text = (
         f"Jogo: {fixture['teams']['home']['name']} {home_goals} x {away_goals} "
         f"{fixture['teams']['away']['name']}, minuto {elapsed}.\n"
-        f"Finalizações no alvo — mandante: {team_stats.get(home_id, {}).get('shots_on_target')}, "
-        f"visitante: {team_stats.get(away_id, {}).get('shots_on_target')}.\n"
-        f"Posse de bola — mandante: {team_stats.get(home_id, {}).get('possession')}%, "
-        f"visitante: {team_stats.get(away_id, {}).get('possession')}%.\n"
-        f"Cartões vermelhos — mandante: {team_stats.get(home_id, {}).get('red_cards')}, "
-        f"visitante: {team_stats.get(away_id, {}).get('red_cards')}.\n"
+        f"Finalizações totais — mandante: {home_st.get('total_shots')}, visitante: {away_st.get('total_shots')} (Projetadas: {proj_data['finalizacoes_totais']:.1f})\n"
+        f"Chutes no alvo — mandante: {home_st.get('shots_on_target')}, visitante: {away_st.get('shots_on_target')} (Projetados: {proj_data['chutes_alvo_totais']:.1f})\n"
+        f"Escanteios — mandante: {home_st.get('corner_kicks')}, visitante: {away_st.get('corner_kicks')} (Projetados: {proj_data['escanteios_totais']:.1f})\n"
+        f"Faltas — mandante: {home_st.get('fouls')}, visitante: {away_st.get('fouls')} (Projetadas: {proj_data['faltas_totais']:.1f})\n"
+        f"Cartões — mandante: {home_st.get('yellow_cards')}, visitante: {away_st.get('yellow_cards')} (Projetados: {proj_data['cartoes_totais']:.1f})\n"
+        f"Posse de bola — mandante: {home_st.get('possession')}%, visitante: {away_st.get('possession')}%\n"
         f"Estimativa do modelo: {best_label} = {best_prob*100:.1f}%."
     )
+    
     gemini_text = ask_gemini_analysis(context_text)
-    message = format_alert(fixture, best_label, best_prob, odd, implied_prob, gemini_text)
+    message = format_alert(fixture, best_label, best_prob, odd, implied_prob, gemini_text, proj_data)
     send_telegram_message(message)
-    print(f"    -> alerta enviado para o Telegram.")
+    print("    -> alerta enviado para o Telegram.")
 
 
 def main():
