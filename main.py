@@ -48,10 +48,10 @@ def _require(name):
     return value
 
 
-API_FOOTBALL_KEY = _require("9d8c3a2c6b6c068c389fef9efb2fa9da")
-TELEGRAM_BOT_TOKEN = _require("8908004567:AAFebWxT1AkL-jTlW2_EtDl1Z06tPYBr7qg")
-TELEGRAM_CHAT_ID = _require("1784568398")
-GEMINI_API_KEY = _require("AQ.Ab8RN6JN-GHWzs4KDh7ykIvN2n7vgwGUGYDcxTRWBi7t-aBWDw")
+API_FOOTBALL_KEY = _require("API_FOOTBALL_KEY")
+TELEGRAM_BOT_TOKEN = _require("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = _require("TELEGRAM_CHAT_ID")
+GEMINI_API_KEY = _require("GEMINI_API_KEY")
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "70"))
