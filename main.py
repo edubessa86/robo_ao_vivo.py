@@ -17,7 +17,7 @@ def _require(name):
     value = os.environ.get(name)
     if not value:
         raise SystemExit(f"Variável de ambiente obrigatória ausente: {name}")
-    return value
+    return value.strip()
 
 
 API_FOOTBALL_KEY = _require("API_FOOTBALL_KEY")
