@@ -5,23 +5,20 @@ from datetime import datetime
 from google import genai
 from google.genai import types
 
-# Pega as chaves seguras do GitHub Secrets
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") 
+# Tenta puxar ambas as variáveis de ambiente para garantir a conexão
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Define o modelo que possui Grounding gratuito (Search)[cite: 2]
-MODELO = "gemini-2.5-flash" 
+# Modelo atualizado conforme exigência da API
+MODELO = "gemini-3.6-flash" 
 
 def enviar_telegram(texto):
-    """Envia a mensagem para o Telegram e verifica os dados de conexão."""
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print("Erro crítico: TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não estão configurados.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    
-    # Divide o texto para evitar o limite de 4096 caracteres do Telegram
     pedacos = [texto[i:i+4000] for i in range(0, len(texto), 4000)]
     
     for pedaco in pedacos:
@@ -36,7 +33,6 @@ def enviar_telegram(texto):
             print(f"Falha de rede ao enviar para o Telegram: {exc}")
 
 def relatorio_fallback(data_hoje):
-    """Gera um relatório de segurança simplificado caso a IA esgote a cota (Erro 429)."""
     return f"""⚽ <b>RELATÓRIO DIÁRIO DE APOSTAS — {data_hoje}</b>
 ━━━━━━━━━━━━━━━━━━
 ⚠️ <b>Aviso de Sistema:</b> 
@@ -56,7 +52,6 @@ def executar_robo_apostas():
     data_hoje = datetime.now().strftime("%d/%m/%Y")
     print(f"Iniciando robô para a data: {data_hoje}...")
     
-    # Inicializa o cliente moderno do Gemini
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt_mestre = f"""
@@ -103,9 +98,8 @@ https://superbet.onelink.me/Hqv6/03r54ds3
             
         except Exception as e:
             tentativa += 1
-            print(f"Aviso/Erro da API do Gemini: {e}.")
+            print(f"Aviso/Erro da API do Gemini: {e}")
             
-            # Identifica erro de cota ou recurso esgotado e força o plano B imediatamente
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                 print("Cota da API esgotada detectada. Acionando relatório de fallback (segurança)...")
                 relatorio = relatorio_fallback(data_hoje)
@@ -119,7 +113,6 @@ https://superbet.onelink.me/Hqv6/03r54ds3
                 print("Falha total após todas as tentativas. Acionando fallback...")
                 relatorio = relatorio_fallback(data_hoje)
 
-    # Dispara para o Telegram, independente de ser a resposta da IA ou a mensagem de segurança
     if relatorio:
         enviar_telegram(relatorio)
 
