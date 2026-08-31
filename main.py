@@ -1,38 +1,31 @@
-from datetime import datetime
 import os
 import time
+import requests
+from datetime import datetime
 from google import genai
 from google.genai import types
-from google.genai.errors import ClientError
-import requests
 
 # Pega as chaves seguras do GitHub Secrets
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") 
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
-API_FOOTBALL_KEY_2 = os.environ.get("API_FOOTBALL_KEY_2")
 
-MODELO = "gemini-3.6-flash"
+# Define o modelo que possui Grounding gratuito (Search)[cite: 2]
+MODELO = "gemini-2.5-flash" 
 
-# Inicializa o cliente oficial moderno do Gemini
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-
-def dividir_mensagem(texto, limite=4000):
-    """Divide textos longos em pedaços menores para respeitar o limite de caracteres do Telegram."""
-    return [texto[i:i + limite] for i in range(0, len(texto), limite)]
-
-
-def enviar_telegram(texto: str) -> None:
-    """Envia uma mensagem (dividida se necessário) para o Telegram."""
+def enviar_telegram(texto):
+    """Envia a mensagem para o Telegram e verifica os dados de conexão."""
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("Erro crítico: TELEGRAM_TOKEN ou TELEGRAM_CHAT_ID não estão configurados nas Secrets do GitHub.")
+        print("Erro crítico: TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não estão configurados.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    for parte in dividir_mensagem(texto):
-        payload = {"chat_id": CHAT_ID, "text": parte, "parse_mode": "HTML"}
+    
+    # Divide o texto para evitar o limite de 4096 caracteres do Telegram
+    pedacos = [texto[i:i+4000] for i in range(0, len(texto), 4000)]
+    
+    for pedaco in pedacos:
+        payload = {"chat_id": CHAT_ID, "text": pedaco, "parse_mode": "HTML"}
         try:
             resposta = requests.post(url, json=payload, timeout=15)
             if resposta.status_code == 200:
@@ -42,89 +35,45 @@ def enviar_telegram(texto: str) -> None:
         except requests.RequestException as exc:
             print(f"Falha de rede ao enviar para o Telegram: {exc}")
 
+def relatorio_fallback(data_hoje):
+    """Gera um relatório de segurança simplificado caso a IA esgote a cota (Erro 429)."""
+    return f"""⚽ <b>RELATÓRIO DIÁRIO DE APOSTAS — {data_hoje}</b>
+━━━━━━━━━━━━━━━━━━
+⚠️ <b>Aviso de Sistema:</b> 
+A inteligência artificial atingiu o limite gratuito de análises de hoje (Cota Excedida). 
+Os palpites detalhados e cruzamento de dados retornarão automaticamente amanhã!
 
-def verificar_status_api_football(api_key: str) -> bool:
-    """Verifica cota e status via endpoint /status da API-Football."""
-    if not api_key:
-        return False
-    url = "https://v3.football.api-sports.io/status"
-    headers = {"x-apisports-key": api_key}
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            requests_info = data.get("response", {}).get("requests", {})
-            current = requests_info.get("current", 0)
-            limit = requests_info.get("limit_day", 100)
-            print(f"API-Football Status -> Consumidas hoje: {current}/{limit}")
-            return current < limit
-    except Exception as e:
-        print(f"Falha ao checar status da API-Football: {e}")
-    return False
+🏆 <b>Dica de Gestão de Banca:</b>
+Mantenha rigor na gestão de banca e controle de stakes. Nunca aposte o que não pode perder.
 
+━━━━━━━━━━━━━━━━━━
+JOGUE COMIGO E GANHE GIROS GRÁTIS NA SUPERBET!
+Aposte para ganhar 100 GIROS GRÁTIS! Divirta-se no link abaixo:
+https://superbet.onelink.me/Hqv6/03r54ds3
+"""
 
-def buscar_jogos_api_football_com_fallback(data_hoje_iso: str):
-    """Gerencia API Principal e Secundária com verificação prévia de cota."""
-    chaves = [
-        ("API Principal (API_FOOTBALL_KEY)", API_FOOTBALL_KEY),
-        ("API Secundária (API_FOOTBALL_KEY_2)", API_FOOTBALL_KEY_2)
-    ]
+def executar_robo_apostas():
+    data_hoje = datetime.now().strftime("%d/%m/%Y")
+    print(f"Iniciando robô para a data: {data_hoje}...")
     
-    for nome, chave in chaves:
-        if not chave:
-            continue
-        print(f"Verificando cota da {nome}...")
-        if verificar_status_api_football(chave):
-            url = f"https://v3.football.api-sports.io/fixtures?date={data_hoje_iso}"
-            headers = {"x-apisports-key": chave}
-            try:
-                resp = requests.get(url, headers=headers, timeout=15)
-                if resp.status_code == 200:
-                    dados = resp.json().get("response", [])
-                    if dados:
-                        print(f"Sucesso! Encontrados {len(dados)} jogos via {nome}.")
-                        return dados, nome
-            except Exception as e:
-                print(f"Erro ao requisitar jogos via {nome}: {e}")
-    return None, None
-
-
-def buscar_jogos_espn():
-    """Conferência cruzada via endpoint público de placares da ESPN."""
-    print("Acionando 3ª camada de precaução: Conferência cruzada via endpoint público da ESPN...")
-    url = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard"
-    try:
-        resp = requests.get(url, timeout=15)
-        if resp.status_code == 200:
-            return resp.json().get("events", [])
-    except Exception as e:
-        print(f"Erro ao consultar endpoint público da ESPN: {e}")
-    return []
-
-
-def montar_prompt(data_hoje: str, dados_jogos_str: str) -> str:
-    return f"""
+    # Inicializa o cliente moderno do Gemini
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    
+    prompt_mestre = f"""
 Você é um sistema automatizado de análise esportiva para apostas.
 
-Com base nos dados obtidos das fontes de verificação ({data_hoje}, fuso de Brasília, UTC-3), traga as melhores apostas esportivas:
-- Contexto de dados estruturados: {dados_jogos_str}
-
-REGRAS OBRIGATÓRIAS:
-- Toda odd, probabilidade ou estatística citada TEM que vir de uma fonte real encontrada. Cite o nome da fonte entre parênteses.
-- NUNCA invente confrontos ou competições.
+Utilize OBRIGATORIAMENTE a ferramenta de busca para encontrar os principais jogos de futebol REAIS que acontecem HOJE ({data_hoje}).
+NUNCA invente confrontos, competições ou estatísticas.
 
 ESTRUTURA OBRIGATÓRIA DO RELATÓRIO PARA O TELEGRAM (HTML)
 ⚽ <b>RELATÓRIO DIÁRIO DE APOSTAS — {data_hoje}</b>
 ━━━━━━━━━━━━━━━━━━
 🏆 <b>TOP APOSTAS DO DIA</b>
-- <b>[Time A] x [Time B]</b> ([Competição], [Horário])
-- Provável vencedor: [conforme fonte]
-- Odd: [valor, com fonte entre parênteses]
-- Estatísticas prováveis com fonte
+(Liste até 5 jogos reais de hoje, com times, competição e 1 palpite seguro de mercado com a respectiva odd aproximada)
 
 ━━━━━━━━━━━━━━━━━━
 📊 <b>DESTAQUES E PROJEÇÕES</b>
-Resumo analítico dos eventos do dia.
+Resumo analítico rápido dos eventos de hoje encontrados na web.
 
 ━━━━━━━━━━━━━━━━━━
 ⚠️ <b>GESTÃO DE BANCA & AVISO LEGAL</b>
@@ -135,43 +84,44 @@ Aposte para ganhar 100 GIROS GRÁTIS! Divirta-se no link abaixo:
 https://superbet.onelink.me/Hqv6/03r54ds3
 """
 
+    max_tentativas = 3
+    tentativa = 0
+    relatorio = None
 
-def executar_robo_apostas():
-    data_hoje = datetime.now().strftime("%d/%m/%Y")
-    data_hoje_iso = datetime.now().strftime("%Y-%m-%d")
+    while tentativa < max_tentativas:
+        try:
+            print(f"Gerando análise via {MODELO} (Tentativa {tentativa+1}/{max_tentativas})...")
+            response = client.models.generate_content(
+                model=MODELO,
+                contents=prompt_mestre,
+                config=types.GenerateContentConfig(
+                    tools=[{"google_search": {}}]
+                )
+            )
+            relatorio = response.text
+            break
+            
+        except Exception as e:
+            tentativa += 1
+            print(f"Aviso/Erro da API do Gemini: {e}.")
+            
+            # Identifica erro de cota ou recurso esgotado e força o plano B imediatamente
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                print("Cota da API esgotada detectada. Acionando relatório de fallback (segurança)...")
+                relatorio = relatorio_fallback(data_hoje)
+                break
+                
+            if tentativa < max_tentativas:
+                tempo_espera = tentativa * 10  
+                print(f"Aguardando {tempo_espera}s para tentar novamente...")
+                time.sleep(tempo_espera)
+            else:
+                print("Falha total após todas as tentativas. Acionando fallback...")
+                relatorio = relatorio_fallback(data_hoje)
 
-    jogos_brutos, fonte_usada = buscar_jogos_api_football_com_fallback(data_hoje_iso)
-    
-    dados_contexto = ""
-    if jogos_brutos:
-        dados_contexto = f"Partidas obtidas via {fonte_usada}: {str(jogos_brutos[:15])}"
-    else:
-        print("APIs de Futebol indisponíveis. Acionando Camada 3 (ESPN)...")
-        eventos_espn = buscar_jogos_espn()
-        if eventos_espn:
-            dados_contexto = f"Partidas obtidas via ESPN: {str(eventos_espn[:15])}"
-        else:
-            dados_contexto = "Nenhum jogo retornado pelas APIs; utilize rigorosamente o Grounding do Google Search."
-
-    prompt_mestre = montar_prompt(data_hoje, dados_contexto)
-    grounding_tool = types.Tool(google_search=types.GoogleSearch())
-    config = types.GenerateContentConfig(tools=[grounding_tool])
-
-    print(f"Gerando análise de apostas para hoje ({data_hoje}) via {MODELO}...")
-    try:
-        response = client.models.generate_content(
-            model=MODELO,
-            contents=prompt_mestre,
-            config=config,
-        )
-        relatorio = response.text
-    except Exception as e:
-        print(f"Erro ao gerar conteúdo com Gemini: {e}")
-        enviar_telegram(f"⚠️ <b>Erro ao gerar relatório do robô de apostas:</b> {str(e)[:300]}")
-        return
-
-    enviar_telegram(relatorio)
-
+    # Dispara para o Telegram, independente de ser a resposta da IA ou a mensagem de segurança
+    if relatorio:
+        enviar_telegram(relatorio)
 
 if __name__ == "__main__":
     executar_robo_apostas()
