@@ -66,11 +66,8 @@ def buscar_estatisticas_partida(fixture_id: int) -> dict:
             stats = {"chutes_gol_casa": 0, "chutes_gol_fora": 0, "escanteios_casa": 0, "escanteios_fora": 0}
             
             for time_stat in dados:
-                eh_casa = time_stat.get("team", {}).get("id") == fixture_id # Referência simples
-                estatisticas = time_stat.get("statistics", [])
-                
-                # Identifica se o objeto é do time da casa ou visitante
                 prefixo = "casa" if time_stat == dados[0] else "fora"
+                estatisticas = time_stat.get("statistics", [])
                 
                 for item in estatisticas:
                     tipo = item.get("type")
@@ -104,24 +101,24 @@ def analisar_oportunidades_ao_vivo():
         if not minuto or not (65 <= minuto <= 83):
             continue
 
-         time_casa = jogo['teams']['home']['name']
-         time_fora = jogo['teams']['away']['name']
-         gols_casa = jogo['goals']['home'] if jogo['goals']['home'] is not None else 0
-         gols_fora = jogo['goals']['away'] if jogo['goals']['away'] is not None else 0
-         liga = jogo['league']['name']
-         pais = jogo['league']['country']
-         fixture_id = jogo['fixture']['id']
+        time_casa = jogo['teams']['home']['name']
+        time_fora = jogo['teams']['away']['name']
+        gols_casa = jogo['goals']['home'] if jogo['goals']['home'] is not None else 0
+        gols_fora = jogo['goals']['away'] if jogo['goals']['away'] is not None else 0
+        liga = jogo['league']['name']
+        pais = jogo['league']['country']
+        fixture_id = jogo['fixture']['id']
 
-         # Regra 1: Jogo empatado (0x0, 1x1, 2x2) no final do partida
-         if gols_casa == gols_fora:
-             # Busca estatísticas de pressão para confirmar a tendência
-             stats = buscar_estatisticas_partida(fixture_id)
-             total_chutes_gol = stats["chutes_gol_casa"] + stats["chutes_gol_fora"]
-             total_escanteios = stats["escanteios_casa"] + stats["escanteios_fora"]
+        # Regra 1: Jogo empatado (0x0, 1x1, 2x2) no final do partida
+        if gols_casa == gols_fora:
+            # Busca estatísticas de pressão para confirmar a tendência
+            stats = buscar_estatisticas_partida(fixture_id)
+            total_chutes_gol = stats["chutes_gol_casa"] + stats["chutes_gol_fora"]
+            total_escanteios = stats["escanteios_casa"] + stats["escanteios_fora"]
 
-             # Regra 2: Gatilho de Pressão (Pelo menos 5 chutes no gol ou 8 escanteios no jogo)
-             if total_chutes_gol >= 5 or total_escanteios >= 8:
-                 alerta_html = f"""⚽ <b>ALERTA DE PRESSÃO AO VIVO</b>
+            # Regra 2: Gatilho de Pressão (Pelo menos 5 chutes no gol ou 8 escanteios no jogo)
+            if total_chutes_gol >= 5 or total_escanteios >= 8:
+                alerta_html = f"""⚽ <b>ALERTA DE PRESSÃO AO VIVO</b>
 ━━━━━━━━━━━━━━━━━━
 🏆 <b>{pais}: {liga}</b>
 ⚔️ <b>{time_casa}</b> {gols_casa} x {gols_fora} <b>{time_fora}</b>
@@ -136,8 +133,8 @@ def analisar_oportunidades_ao_vivo():
 <i>Motivo: Jogo empatado no 2º tempo com alta pressão ofensiva.</i>
 ━━━━━━━━━━━━━━━━━━
 """
-                 enviar_telegram(alerta_html)
-                 alertas_encontrados += 1
+                enviar_telegram(alerta_html)
+                alertas_encontrados += 1
 
     if alertas_encontrados == 0:
         print("ℹ️ Nenhum jogo atingiu os critérios de pressão no momento.")
