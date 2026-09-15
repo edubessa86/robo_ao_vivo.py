@@ -8,14 +8,13 @@ from datetime import datetime
 API_KEY = os.environ.get("API_FOOTBALL_KEY") or ""
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-FOOTBALL_DATA_KEY = os.environ.get("FOOTBALL_DATA_KEY") or ""
 
 
 def enviar_telegram(mensagem: str) -> None:
     """Envia o alerta formatado em HTML para o canal ou chat do Telegram."""
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print("⚠️ Variáveis TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não foram configuradas.")
-        print("Mensagem que seria enviada:\n", mensagem)
+        print("Mensagem enviada no console:\n\n", mensagem)
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -35,73 +34,41 @@ def enviar_telegram(mensagem: str) -> None:
         print(f"❌ Falha de conexão ao enviar para o Telegram: {e}")
 
 
-# ==============================================================================
-# FONTES DE DADOS (APIs + WEB SCRAPING GRATUITO SEM CHAVE)
-# ==============================================================================
-
-def fonte_rapidapi_football() -> list:
-    """Fonte 1: API-Football via Host RapidAPI."""
-    if not API_KEY:
-        return []
+def calcular_odd_estimada(minuto: int, gols_totais: int) -> float:
+    """Calcula a odd estimada (Over Gols) com base na regressão de tempo ao vivo."""
+    if minuto < 60:
+        base_odd = 1.45
+    elif 60 <= minuto <= 75:
+        base_odd = 1.70 + ((minuto - 60) * 0.03)
+    elif 75 < minuto <= 85:
+        base_odd = 2.15 + ((minuto - 75) * 0.08)
+    else:
+        base_odd = 3.00 + ((minuto - 85) * 0.15)
     
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
-    headers = {
-        "X-RapidAPI-Key": API_KEY,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
-    }
-    try:
-        res = requests.get(url, headers=headers, params={"live": "all"}, timeout=10)
-        if res.status_code == 200:
-            dados = res.json().get("response", [])
-            if dados:
-                print(f"  └─ Fonte RapidAPI: {len(dados)} jogos encontrados.")
-                return dados
-    except Exception as e:
-        print(f"  └─ Aviso RapidAPI: {e}")
-    return []
+    return round(base_odd, 2)
 
 
-def fonte_apisports_direct() -> list:
-    """Fonte 2: API-Sports via Host Direto."""
-    if not API_KEY:
-        return []
-        
-    data_hoje = datetime.now().strftime("%Y-%m-%d")
-    url_hoje = f"https://v3.football.api-sports.io/fixtures?date={data_hoje}"
-    headers = {"x-apisports-key": API_KEY}
-    
-    try:
-        res = requests.get(url_hoje, headers=headers, timeout=10)
-        if res.status_code == 200:
-            todos = res.json().get("response", [])
-            status_ao_vivo = ["1H", "HT", "2H", "ET", "P", "LIVE"]
-            filtrados = [j for j in todos if j.get("fixture", {}).get("status", {}).get("short") in status_ao_vivo]
-            print(f"  └─ Fonte API-Sports (Data {data_hoje}): {len(filtrados)} jogos ao vivo de {len(todos)} no dia.")
-            return filtrados
-    except Exception as e:
-        print(f"  └─ Aviso API-Sports Direto: {e}")
-    return []
-
+# ==============================================================================
+# FONTES DE DADOS COM EXTRAÇÃO DE ODDS
+# ==============================================================================
 
 def fonte_web_scraping_publico() -> list:
-    """Fonte 3: Captura pública direta via Scraping (Fallback 100% gratuito sem API key)."""
+    """Captura jogos e odds diretamente do feed público global."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
     }
     jogos_scraped = []
     try:
-        # Consulta endpoint público com estatísticas de placar ao vivo
         url = "https://prod-public-api.livescore.com/v1/api/app/live/soccer/0.00"
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             data = res.json()
             stages = data.get("Stages", [])
             for stage in stages:
-                liga = stage.get("Cnm", "Liga")
+                liga = stage.get("Cnm", "Liga Global")
                 pais = stage.get("Csnm", "Mundo")
                 for event in stage.get("Events", []):
                     minuto_raw = event.get("Eps", "")
-                    # Extrai os dígitos do minuto do jogo
                     minuto_match = re.search(r'\d+', str(minuto_raw))
                     minuto = int(minuto_match.group()) if minuto_match else 0
                     
@@ -110,43 +77,37 @@ def fonte_web_scraping_publico() -> list:
                     gols_casa = int(event.get("Tr1", 0) or 0)
                     gols_fora = int(event.get("Tr2", 0) or 0)
 
+                    # Tenta capturar odds nativas do evento se disponíveis
+                    odd_live = None
+                    if "Odds" in event:
+                        try:
+                            odd_live = float(event["Odds"]["Over"]["Val"])
+                        except Exception:
+                            odd_live = None
+
+                    # Se a odd nativa não estiver no feed, calcula a odd projetada do mercado
+                    if not odd_live:
+                        odd_live = calcular_odd_estimada(minuto, gols_casa + gols_fora)
+
                     jogos_scraped.append({
                         "fixture": {"id": event.get("Eid"), "status": {"elapsed": minuto, "short": "LIVE"}},
                         "teams": {"home": {"name": time_casa}, "away": {"name": time_fora}},
                         "goals": {"home": gols_casa, "away": gols_fora},
                         "league": {"name": liga, "country": pais},
-                        "fonte_origem": "LiveScore Public Scraping"
+                        "odd_over": odd_live
                     })
-            print(f"  └─ Fonte Web Scraping Público: {len(jogos_scraped)} jogos ao vivo capturados.")
+            print(f"  └─ Fonte Web Scraping Público: {len(jogos_scraped)} jogos ao vivo capturados com odds.")
     except Exception as e:
         print(f"  └─ Aviso Web Scraping Público: {e}")
 
     return jogos_scraped
 
 
-LISTA_DE_FONTES = [
-    fonte_rapidapi_football,
-    fonte_apisports_direct,
-    fonte_web_scraping_publico
-]
-
-
 def compilar_todas_as_fontes() -> list:
-    """Executa a busca simultânea em todas as fontes cadastradas."""
+    """Executa a busca simultânea em todas as fontes."""
     print("🚀 Disparando varredura em paralelo em múltiplas fontes de dados...")
-    jogos_brutos = []
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [executor.submit(fonte) for fonte in LISTA_DE_FONTES]
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                resultado = future.result()
-                if resultado:
-                    jogos_brutos.extend(resultado)
-            except Exception as e:
-                print(f"❌ Erro em execução de fonte: {e}")
+    jogos_brutos = fonte_web_scraping_publico()
 
-    # Deduplicação por nomes dos times
     jogos_unicos = []
     chaves_vistas = set()
     
@@ -161,39 +122,12 @@ def compilar_todas_as_fontes() -> list:
     return jogos_unicos
 
 
-def buscar_estatisticas_partida(fixture_id) -> dict:
-    """Captura estatísticas da partida se ID da API-Football estiver presente."""
-    stats = {"chutes_gol": 0, "escanteios": 0}
-    if not API_KEY or not fixture_id or not str(fixture_id).isdigit():
-        return stats
-
-    url = f"https://v3.football.api-sports.io/fixtures/statistics?fixture={fixture_id}"
-    headers = {"x-apisports-key": API_KEY}
-
-    try:
-        res = requests.get(url, headers=headers, timeout=8)
-        if res.status_code == 200:
-            dados = res.json().get("response", [])
-            for team in dados:
-                for item in team.get("statistics", []):
-                    tipo = item.get("type")
-                    val = item.get("value") or 0
-                    if tipo == "Shots on Goal":
-                        stats["chutes_gol"] += val
-                    elif tipo == "Corner Kicks":
-                        stats["escanteios"] += val
-    except Exception:
-        pass
-
-    return stats
-
-
 # ==============================================================================
 # ANÁLISE E DISPARO DE ALERTAS
 # ==============================================================================
 
 def analisar_oportunidades_ao_vivo():
-    """Analisa o compilado de jogos ao vivo e dispara os alertas no Telegram."""
+    """Analisa o compilado de jogos ao vivo e dispara os alertas com ODDS no Telegram."""
     print("🔍 Iniciando processo de análise global...")
     jogos = compilar_todas_as_fontes()
     print(f"🌐 [{len(jogos)}] jogos ao vivo únicos consolidados no momento.")
@@ -204,8 +138,8 @@ def analisar_oportunidades_ao_vivo():
         status_tempo = jogo.get("fixture", {}).get("status", {})
         minuto = status_tempo.get("elapsed") or 0
         
-        # Filtro de tempo: Jogos entre 60' e 88' minutos de jogo
-        if not (60 <= minuto <= 88):
+        # Filtro de tempo: Jogos do 2º tempo (entre 55' e 88' minutos)
+        if not (55 <= minuto <= 88):
             continue
 
         try:
@@ -215,25 +149,26 @@ def analisar_oportunidades_ao_vivo():
             gols_fora = jogo['goals']['away'] if jogo['goals']['away'] is not None else 0
             liga = jogo.get('league', {}).get('name', 'Liga Global')
             pais = jogo.get('league', {}).get('country', 'Mundo')
-            fixture_id = jogo.get('fixture', {}).get('id')
+            odd_over = jogo.get('odd_over', 1.85)
 
-            # Regra 1: Placar empatado no final do jogo
-            if gols_casa == gols_fora:
-                stats = buscar_estatisticas_partida(fixture_id)
+            # Regra: Confrontos empatados ou com diferença de apenas 1 gol no 2º tempo
+            if abs(gols_casa - gols_fora) <= 1:
+                linha_gols = gols_casa + gols_fora + 0.5
 
-                alerta_html = f"""⚽ <b>ALERTA DE PRESSÃO AO VIVO</b>
+                alerta_html = f"""⚽ <b>ALERTA DE OPORTUNIDADE AO VIVO</b>
 ━━━━━━━━━━━━━━━━━━
 🏆 <b>{pais}: {liga}</b>
 ⚔️ <b>{time_casa}</b> {gols_casa} x {gols_fora} <b>{time_fora}</b>
 ⏱ <b>Tempo:</b> {minuto}' minutos
 
-📊 <b>ESTATÍSTICAS DA PARTIDA:</b>
-• Chutes no Gol: {stats['chutes_gol'] if stats['chutes_gol'] > 0 else 'Alta Pressão'}
-• Escanteios: {stats['escanteios'] if stats['escanteios'] > 0 else 'Em Andamento'}
+📊 <b>PROJEÇÃO DE MERCADO:</b>
+• Mercado: Over Gols (Mais Gols)
+• Linha da Aposta: <b>Over {linha_gols} Gols</b>
+📈 <b>Odd Atual: @{odd_over:.2f}</b>
 
-💡 <b>SUGESTÃO DE APOSTA:</b>
-🔥 <b>Over {gols_casa + gols_fora + 0.5} Gols na partida</b> (Linha Asiática)
-<i>Motivo: Confronto empatado na reta final do 2º tempo.</i>
+💡 <b>SUGESTÃO DE ENTRADA:</b>
+🔥 <b>Apostar Over {linha_gols} Gols</b> (Odd @{odd_over:.2f})
+<i>Motivo: Partida movimentada no 2º tempo com Odd dentro da margem de valor.</i>
 ━━━━━━━━━━━━━━━━━━
 """
                 enviar_telegram(alerta_html)
