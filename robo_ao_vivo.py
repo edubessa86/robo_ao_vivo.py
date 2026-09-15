@@ -16,10 +16,10 @@ HEADERS = {
 
 
 def enviar_telegram(mensagem: str) -> None:
-    """Envia o alerta formatado em HTML para o canal ou chat do Telegram."""
+    """Envia o alerta formatado em HTML para o Telegram."""
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print("⚠️ Variáveis TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não foram configuradas.")
-        print(mensagem)  # Exibe no console caso o Telegram não esteja configurado
+        print(mensagem)
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -40,7 +40,7 @@ def enviar_telegram(mensagem: str) -> None:
 
 
 def buscar_jogos_ao_vivo() -> list:
-    """Busca jogos ao vivo com suporte a fallback de partidas do dia caso o endpoint live retorne vazio."""
+    """Busca jogos ao vivo com suporte a fuso horário e fallback de partidas do dia."""
     # Tentativa 1: Endpoint direto de jogos ao vivo
     url_live = f"https://{API_HOST}/fixtures?live=all"
     
@@ -49,26 +49,34 @@ def buscar_jogos_ao_vivo() -> list:
         if response.status_code == 200:
             dados = response.json().get("response", [])
             if dados:
+                print(f"✅ Encontrados {len(dados)} jogos via endpoint live=all.")
                 return dados
     except Exception as e:
         print(f"Aviso ao consultar endpoint live: {e}")
 
-    # Tentativa 2 (Fallback): Buscar todos os jogos agendados para hoje e filtrar os que estão AO VIVO
+    # Tentativa 2 (Fallback): Buscar todos os jogos de hoje com fuso de São Paulo
     data_hoje = datetime.now().strftime("%Y-%m-%d")
-    print(f"🔄 Buscando todas as partidas da data ({data_hoje}) para filtrar confrontos ao vivo...")
-    url_hoje = f"https://{API_HOST}/fixtures?date={data_hoje}"
+    print(f"🔄 Buscando partidas da data ({data_hoje}) no fuso America/Sao_Paulo...")
+    url_hoje = f"https://{API_HOST}/fixtures?date={data_hoje}&timezone=America/Sao_Paulo"
 
     try:
         response = requests.get(url_hoje, headers=HEADERS, timeout=15)
         if response.status_code == 200:
             todos_jogos = response.json().get("response", [])
-            # Statuses oficiais da API que indicam jogo ativo no momento
+            print(f"📊 Total de jogos retornados pela API no dia de hoje: {len(todos_jogos)}")
+            
+            # Statuses oficiais que indicam jogo ativo no momento
             status_ao_vivo = ["1H", "HT", "2H", "ET", "P", "LIVE"]
-            jogos_filtrados = [
-                j for j in todos_jogos 
-                if j.get("fixture", {}).get("status", {}).get("short") in status_ao_vivo
-            ]
+            
+            jogos_filtrados = []
+            for j in todos_jogos:
+                st = j.get("fixture", {}).get("status", {}).get("short")
+                if st in status_ao_vivo:
+                    jogos_filtrados.append(j)
+                    
             return jogos_filtrados
+        else:
+            print(f"❌ Erro HTTP na API: {response.status_code} - {response.text}")
     except Exception as e:
         print(f"Erro ao buscar partidas por data: {e}")
 
@@ -76,7 +84,7 @@ def buscar_jogos_ao_vivo() -> list:
 
 
 def buscar_estatisticas_partida(fixture_id: int) -> dict:
-    """Busca estatísticas detalhadas (chutes e escanteios) de um jogo específico."""
+    """Busca estatísticas detalhadas de um jogo específico."""
     url = f"https://{API_HOST}/fixtures/statistics?fixture={fixture_id}"
     stats = {"chutes_gol_casa": 0, "chutes_gol_fora": 0, "escanteios_casa": 0, "escanteios_fora": 0}
     
@@ -109,7 +117,7 @@ def analisar_oportunidades_ao_vivo():
     """Varre as partidas ao vivo e aplica as regras matemáticas de pressão."""
     print("🔍 Iniciando varredura global de jogos ao vivo...")
     jogos = buscar_jogos_ao_vivo()
-    print(f"🌐 [{len(jogos)}] jogos ativos/ao vivo encontrados no momento.")
+    print(f"🌐 [{len(jogos)}] jogos ativos/ao vivo filtrados no momento.")
 
     alertas_encontrados = 0
 
@@ -117,7 +125,7 @@ def analisar_oportunidades_ao_vivo():
         status_tempo = jogo.get("fixture", {}).get("status", {})
         minuto = status_tempo.get("elapsed")
         
-        # Filtro de tempo: Apenas jogos entre os minutos 65' e 83' do 2º tempo
+        # Filtro de tempo: Jogos entre os minutos 65' e 83' do 2º tempo
         if not minuto or not (65 <= minuto <= 83):
             continue
 
@@ -131,7 +139,6 @@ def analisar_oportunidades_ao_vivo():
 
         # Regra 1: Jogo empatado no 2º tempo
         if gols_casa == gols_fora:
-            # Busca estatísticas de pressão
             stats = buscar_estatisticas_partida(fixture_id)
             total_chutes_gol = stats["chutes_gol_casa"] + stats["chutes_gol_fora"]
             total_escanteios = stats["escanteios_casa"] + stats["escanteios_fora"]
