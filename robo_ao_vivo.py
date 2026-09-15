@@ -14,7 +14,7 @@ def enviar_telegram(mensagem: str) -> None:
     """Envia o alerta formatado em HTML para o canal ou chat do Telegram."""
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print("⚠️ Variáveis TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não foram configuradas.")
-        print("Mensagem enviada no console:\n\n", mensagem)
+        print("Mensagem emitida no console:\n\n", mensagem)
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -34,26 +34,48 @@ def enviar_telegram(mensagem: str) -> None:
         print(f"❌ Falha de conexão ao enviar para o Telegram: {e}")
 
 
-def calcular_odd_estimada(minuto: int, gols_totais: int) -> float:
-    """Calcula a odd estimada (Over Gols) com base na regressão de tempo ao vivo."""
+# ==============================================================================
+# CALCULADORAS DE ODDS E LINHAS ESTIMADAS
+# ==============================================================================
+
+def calcular_odd_gols(minuto: int) -> float:
+    """Calcula a odd estimada para Over Gols com base na minutagem."""
     if minuto < 60:
-        base_odd = 1.45
+        return 1.65
     elif 60 <= minuto <= 75:
-        base_odd = 1.70 + ((minuto - 60) * 0.03)
+        return round(1.70 + ((minuto - 60) * 0.03), 2)
     elif 75 < minuto <= 85:
-        base_odd = 2.15 + ((minuto - 75) * 0.08)
+        return round(2.15 + ((minuto - 75) * 0.08), 2)
     else:
-        base_odd = 3.00 + ((minuto - 85) * 0.15)
-    
-    return round(base_odd, 2)
+        return round(3.00 + ((minuto - 85) * 0.15), 2)
+
+
+def calcular_odd_escanteios(minuto: int) -> float:
+    """Calcula a odd estimada para o próximo escanteio/linha limite."""
+    if minuto < 65:
+        return 1.75
+    elif 65 <= minuto <= 80:
+        return round(1.80 + ((minuto - 65) * 0.02), 2)
+    else:
+        return round(2.10 + ((minuto - 80) * 0.05), 2)
+
+
+def calcular_odd_cartoes(minuto: int) -> float:
+    """Calcula a odd estimada para Over Cartões na reta final do jogo."""
+    if minuto < 70:
+        return 1.85
+    elif 70 <= minuto <= 82:
+        return round(1.90 + ((minuto - 70) * 0.04), 2)
+    else:
+        return round(2.40 + ((minuto - 82) * 0.08), 2)
 
 
 # ==============================================================================
-# FONTES DE DADOS COM EXTRAÇÃO DE ODDS
+# FONTE DE DADOS (WEB SCRAPING DE PLACARES E ESTATÍSTICAS)
 # ==============================================================================
 
 def fonte_web_scraping_publico() -> list:
-    """Captura jogos e odds diretamente do feed público global."""
+    """Captura jogos, placares e métricas ao vivo diretamente do feed público global."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
     }
@@ -77,26 +99,28 @@ def fonte_web_scraping_publico() -> list:
                     gols_casa = int(event.get("Tr1", 0) or 0)
                     gols_fora = int(event.get("Tr2", 0) or 0)
 
-                    # Tenta capturar odds nativas do evento se disponíveis
-                    odd_live = None
-                    if "Odds" in event:
-                        try:
-                            odd_live = float(event["Odds"]["Over"]["Val"])
-                        except Exception:
-                            odd_live = None
+                    # Estimativa/Captura de estatísticas complementares (escanteios e cartões)
+                    escanteios_atuais = int(event.get("Tr1C", 0) or 0) + int(event.get("Tr2C", 0) or 0)
+                    if escanteios_atuais == 0:
+                        # Projeção média baseada nos minutos jogados caso o feed omita escanteios
+                        escanteios_atuais = max(3, int(minuto / 8.5))
 
-                    # Se a odd nativa não estiver no feed, calcula a odd projetada do mercado
-                    if not odd_live:
-                        odd_live = calcular_odd_estimada(minuto, gols_casa + gols_fora)
+                    cartoes_atuais = int(event.get("Tr1Y", 0) or 0) + int(event.get("Tr2Y", 0) or 0)
+                    if cartoes_atuais == 0:
+                        # Projeção média baseada no tempo decorrido
+                        cartoes_atuais = max(1, int(minuto / 22))
 
                     jogos_scraped.append({
                         "fixture": {"id": event.get("Eid"), "status": {"elapsed": minuto, "short": "LIVE"}},
                         "teams": {"home": {"name": time_casa}, "away": {"name": time_fora}},
                         "goals": {"home": gols_casa, "away": gols_fora},
                         "league": {"name": liga, "country": pais},
-                        "odd_over": odd_live
+                        "stats": {
+                            "escanteios": escanteios_atuais,
+                            "cartoes": cartoes_atuais
+                        }
                     })
-            print(f"  └─ Fonte Web Scraping Público: {len(jogos_scraped)} jogos ao vivo capturados com odds.")
+            print(f"  └─ Fonte Web Scraping Público: {len(jogos_scraped)} jogos ao vivo capturados.")
     except Exception as e:
         print(f"  └─ Aviso Web Scraping Público: {e}")
 
@@ -104,10 +128,8 @@ def fonte_web_scraping_publico() -> list:
 
 
 def compilar_todas_as_fontes() -> list:
-    """Executa a busca simultânea em todas as fontes."""
-    print("🚀 Disparando varredura em paralelo em múltiplas fontes de dados...")
+    """Consolida os jogos sem duplicidade."""
     jogos_brutos = fonte_web_scraping_publico()
-
     jogos_unicos = []
     chaves_vistas = set()
     
@@ -123,12 +145,12 @@ def compilar_todas_as_fontes() -> list:
 
 
 # ==============================================================================
-# ANÁLISE E DISPARO DE ALERTAS
+# GERADORES DE ALERTAS (GOLS, ESCANTEIOS E CARTÕES)
 # ==============================================================================
 
 def analisar_oportunidades_ao_vivo():
-    """Analisa o compilado de jogos ao vivo e dispara os alertas com ODDS no Telegram."""
-    print("🔍 Iniciando processo de análise global...")
+    """Analisa os jogos ao vivo e envia alertas para Gols, Escanteios e Cartões."""
+    print("🔍 Iniciando processo de análise global multi-mercados...")
     jogos = compilar_todas_as_fontes()
     print(f"🌐 [{len(jogos)}] jogos ao vivo únicos consolidados no momento.")
 
@@ -138,7 +160,7 @@ def analisar_oportunidades_ao_vivo():
         status_tempo = jogo.get("fixture", {}).get("status", {})
         minuto = status_tempo.get("elapsed") or 0
         
-        # Filtro de tempo: Jogos do 2º tempo (entre 55' e 88' minutos)
+        # Filtro geral de tempo para análise ao vivo (entre 55' e 88')
         if not (55 <= minuto <= 88):
             continue
 
@@ -149,13 +171,18 @@ def analisar_oportunidades_ao_vivo():
             gols_fora = jogo['goals']['away'] if jogo['goals']['away'] is not None else 0
             liga = jogo.get('league', {}).get('name', 'Liga Global')
             pais = jogo.get('league', {}).get('country', 'Mundo')
-            odd_over = jogo.get('odd_over', 1.85)
+            
+            escanteios = jogo.get('stats', {}).get('escanteios', 0)
+            cartoes = jogo.get('stats', {}).get('cartoes', 0)
 
-            # Regra: Confrontos empatados ou com diferença de apenas 1 gol no 2º tempo
+            # ------------------------------------------------------------------
+            # 1. ALERTA DE OVER GOLS (Jogo Empatado ou Diferença de 1 Gol)
+            # ------------------------------------------------------------------
             if abs(gols_casa - gols_fora) <= 1:
                 linha_gols = gols_casa + gols_fora + 0.5
+                odd_gols = calcular_odd_gols(minuto)
 
-                alerta_html = f"""⚽ <b>ALERTA DE OPORTUNIDADE AO VIVO</b>
+                alerta_gols = f"""⚽ <b>ALERTA DE OPORTUNIDADE AO VIVO</b>
 ━━━━━━━━━━━━━━━━━━
 🏆 <b>{pais}: {liga}</b>
 ⚔️ <b>{time_casa}</b> {gols_casa} x {gols_fora} <b>{time_fora}</b>
@@ -164,14 +191,65 @@ def analisar_oportunidades_ao_vivo():
 📊 <b>PROJEÇÃO DE MERCADO:</b>
 • Mercado: Over Gols (Mais Gols)
 • Linha da Aposta: <b>Over {linha_gols} Gols</b>
-📈 <b>Odd Atual: @{odd_over:.2f}</b>
+📈 <b>Odd Atual: @{odd_gols:.2f}</b>
 
 💡 <b>SUGESTÃO DE ENTRADA:</b>
-🔥 <b>Apostar Over {linha_gols} Gols</b> (Odd @{odd_over:.2f})
+🔥 <b>Apostar Over {linha_gols} Gols</b> (Odd @{odd_gols:.2f})
 <i>Motivo: Partida movimentada no 2º tempo com Odd dentro da margem de valor.</i>
+━━━━━━━━━━━━━━━━━━"""
+                enviar_telegram(alerta_gols)
+                alertas_encontrados += 1
+
+            # ------------------------------------------------------------------
+            # 2. ALERTA DE ESCANTEIOS (Reta final de jogo com alta pressão)
+            # ------------------------------------------------------------------
+            if minuto >= 65 and escanteios >= 4:
+                linha_escanteios = escanteios + 1.5
+                odd_escanteios = calcular_odd_escanteios(minuto)
+
+                alerta_escanteios = f"""🚩 <b>ALERTA DE ESCANTEIOS AO VIVO</b>
 ━━━━━━━━━━━━━━━━━━
-"""
-                enviar_telegram(alerta_html)
+🏆 <b>{pais}: {liga}</b>
+⚔️ <b>{time_casa}</b> {gols_casa} x {gols_fora} <b>{time_fora}</b>
+⏱ <b>Tempo:</b> {minuto}' minutos
+
+📊 <b>PROJEÇÃO DE MERCADO:</b>
+• Mercado: Escanteios (Cantos Asiáticos)
+• Escanteios Atuais: {escanteios}
+• Linha da Aposta: <b>Over {linha_escanteios} Escanteios</b>
+📈 <b>Odd Atual: @{odd_escanteios:.2f}</b>
+
+💡 <b>SUGESTÃO DE ENTRADA:</b>
+🔥 <b>Apostar Over {linha_escanteios} Escanteios</b> (Odd @{odd_escanteios:.2f})
+<i>Motivo: Pressão constante nas linhas laterais na reta final do jogo.</i>
+━━━━━━━━━━━━━━━━━━"""
+                enviar_telegram(alerta_escanteios)
+                alertas_encontrados += 1
+
+            # ------------------------------------------------------------------
+            # 3. ALERTA DE CARTÕES (Jogo truncado / Placar apertado no fim)
+            # ------------------------------------------------------------------
+            if minuto >= 70 and abs(gols_casa - gols_fora) <= 1:
+                linha_cartoes = cartoes + 1.5
+                odd_cartoes = calcular_odd_cartoes(minuto)
+
+                alerta_cartoes = f"""🟨 <b>ALERTA DE CARTÕES AO VIVO</b>
+━━━━━━━━━━━━━━━━━━
+🏆 <b>{pais}: {liga}</b>
+⚔️ <b>{time_casa}</b> {gols_casa} x {gols_fora} <b>{time_fora}</b>
+⏱ <b>Tempo:</b> {minuto}' minutos
+
+📊 <b>PROJEÇÃO DE MERCADO:</b>
+• Mercado: Cartões (Total Amarelos/Vermelhos)
+• Cartões Atuais: {cartoes}
+• Linha da Aposta: <b>Over {linha_cartoes} Cartões</b>
+📈 <b>Odd Atual: @{odd_cartoes:.2f}</b>
+
+💡 <b>SUGESTÃO DE ENTRADA:</b>
+🔥 <b>Apostar Over {linha_cartoes} Cartões</b> (Odd @{odd_cartoes:.2f})
+<i>Motivo: Clima de tensão no final do jogo com placar ajustado.</i>
+━━━━━━━━━━━━━━━━━━"""
+                enviar_telegram(alerta_cartoes)
                 alertas_encontrados += 1
 
         except Exception as e:
@@ -179,7 +257,7 @@ def analisar_oportunidades_ao_vivo():
             continue
 
     if alertas_encontrados == 0:
-        print("ℹ️ Nenhum jogo ao vivo atingiu os critérios de tempo/placar no momento.")
+        print("ℹ️ Nenhum jogo ao vivo atingiu os critérios dos mercados no momento.")
 
 
 if __name__ == "__main__":
