@@ -1,5 +1,6 @@
 import os
 import requests
+from datetime import datetime
 
 # Setups e Variáveis de Ambiente
 API_KEY = os.environ.get("API_FOOTBALL_KEY") or "SUA_CHAVE_API_FOOTBALL_AQUI"
@@ -39,34 +40,53 @@ def enviar_telegram(mensagem: str) -> None:
 
 
 def buscar_jogos_ao_vivo() -> list:
-    """Busca todas as partidas de futebol que estão acontecendo no momento."""
-    url = f"https://{API_HOST}/fixtures?live=all"
+    """Busca jogos ao vivo com suporte a fallback de partidas do dia caso o endpoint live retorne vazio."""
+    # Tentativa 1: Endpoint direto de jogos ao vivo
+    url_live = f"https://{API_HOST}/fixtures?live=all"
     
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
+        response = requests.get(url_live, headers=HEADERS, timeout=15)
         if response.status_code == 200:
-            dados = response.json()
-            return dados.get("response", [])
-        else:
-            print(f"Erro na API-Football: Status {response.status_code}")
-            return []
+            dados = response.json().get("response", [])
+            if dados:
+                return dados
     except Exception as e:
-        print(f"Erro de conexão com a API: {e}")
-        return []
+        print(f"Aviso ao consultar endpoint live: {e}")
+
+    # Tentativa 2 (Fallback): Buscar todos os jogos agendados para hoje e filtrar os que estão AO VIVO
+    data_hoje = datetime.now().strftime("%Y-%m-%d")
+    print(f"🔄 Buscando todas as partidas da data ({data_hoje}) para filtrar confrontos ao vivo...")
+    url_hoje = f"https://{API_HOST}/fixtures?date={data_hoje}"
+
+    try:
+        response = requests.get(url_hoje, headers=HEADERS, timeout=15)
+        if response.status_code == 200:
+            todos_jogos = response.json().get("response", [])
+            # Statuses oficiais da API que indicam jogo ativo no momento
+            status_ao_vivo = ["1H", "HT", "2H", "ET", "P", "LIVE"]
+            jogos_filtrados = [
+                j for j in todos_jogos 
+                if j.get("fixture", {}).get("status", {}).get("short") in status_ao_vivo
+            ]
+            return jogos_filtrados
+    except Exception as e:
+        print(f"Erro ao buscar partidas por data: {e}")
+
+    return []
 
 
 def buscar_estatisticas_partida(fixture_id: int) -> dict:
-    """Busca estatísticas detalhadas (chutes, escanteios, posse) de um jogo específico."""
+    """Busca estatísticas detalhadas (chutes e escanteios) de um jogo específico."""
     url = f"https://{API_HOST}/fixtures/statistics?fixture={fixture_id}"
+    stats = {"chutes_gol_casa": 0, "chutes_gol_fora": 0, "escanteios_casa": 0, "escanteios_fora": 0}
     
     try:
         response = requests.get(url, headers=HEADERS, timeout=10)
         if response.status_code == 200:
             dados = response.json().get("response", [])
-            stats = {"chutes_gol_casa": 0, "chutes_gol_fora": 0, "escanteios_casa": 0, "escanteios_fora": 0}
             
-            for time_stat in dados:
-                prefixo = "casa" if time_stat == dados[0] else "fora"
+            for index, time_stat in enumerate(dados):
+                prefixo = "casa" if index == 0 else "fora"
                 estatisticas = time_stat.get("statistics", [])
                 
                 for item in estatisticas:
@@ -79,17 +99,17 @@ def buscar_estatisticas_partida(fixture_id: int) -> dict:
                         stats[f"escanteios_{prefixo}"] = valor
 
             return stats
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Aviso ao consultar estatísticas do jogo {fixture_id}: {e}")
     
-    return {"chutes_gol_casa": 0, "chutes_gol_fora": 0, "escanteios_casa": 0, "escanteios_fora": 0}
+    return stats
 
 
 def analisar_oportunidades_ao_vivo():
-    """Varre todas as partidas ao vivo e aplica regras matemáticas para entradas de alta probabilidade."""
+    """Varre as partidas ao vivo e aplica as regras matemáticas de pressão."""
     print("🔍 Iniciando varredura global de jogos ao vivo...")
     jogos = buscar_jogos_ao_vivo()
-    print(f"🌐 [{len(jogos)}] jogos ao vivo encontrados no mundo inteiro neste momento.")
+    print(f"🌐 [{len(jogos)}] jogos ativos/ao vivo encontrados no momento.")
 
     alertas_encontrados = 0
 
@@ -97,7 +117,7 @@ def analisar_oportunidades_ao_vivo():
         status_tempo = jogo.get("fixture", {}).get("status", {})
         minuto = status_tempo.get("elapsed")
         
-        # Filtra apenas jogos no segundo tempo (entre 65' e 83' minutos)
+        # Filtro de tempo: Apenas jogos entre os minutos 65' e 83' do 2º tempo
         if not minuto or not (65 <= minuto <= 83):
             continue
 
@@ -109,14 +129,14 @@ def analisar_oportunidades_ao_vivo():
         pais = jogo['league']['country']
         fixture_id = jogo['fixture']['id']
 
-        # Regra 1: Jogo empatado (0x0, 1x1, 2x2) no final do partida
+        # Regra 1: Jogo empatado no 2º tempo
         if gols_casa == gols_fora:
-            # Busca estatísticas de pressão para confirmar a tendência
+            # Busca estatísticas de pressão
             stats = buscar_estatisticas_partida(fixture_id)
             total_chutes_gol = stats["chutes_gol_casa"] + stats["chutes_gol_fora"]
             total_escanteios = stats["escanteios_casa"] + stats["escanteios_fora"]
 
-            # Regra 2: Gatilho de Pressão (Pelo menos 5 chutes no gol ou 8 escanteios no jogo)
+            # Regra 2: Gatilho de Pressão (≥5 chutes no gol OU ≥8 escanteios no total)
             if total_chutes_gol >= 5 or total_escanteios >= 8:
                 alerta_html = f"""⚽ <b>ALERTA DE PRESSÃO AO VIVO</b>
 ━━━━━━━━━━━━━━━━━━
@@ -137,7 +157,7 @@ def analisar_oportunidades_ao_vivo():
                 alertas_encontrados += 1
 
     if alertas_encontrados == 0:
-        print("ℹ️ Nenhum jogo atingiu os critérios de pressão no momento.")
+        print("ℹ️ Nenhum jogo ao vivo atingiu todos os critérios de pressão no momento.")
 
 
 if __name__ == "__main__":
