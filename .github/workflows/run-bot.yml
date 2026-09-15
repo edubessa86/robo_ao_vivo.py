@@ -1,7 +1,9 @@
-name: Executar Robô de Apostas
+name: Executar Robô de Apostas Ao Vivo
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Permite rodar manualmente no GitHub
+  schedule:
+    - cron: '*/15 * * * *' # Opcional: Roda automaticamente a cada 15 minutos
 
 jobs:
   run-bot:
@@ -19,11 +21,13 @@ jobs:
     - name: Instalar Dependências
       run: |
         python -m pip install --upgrade pip
-        pip install requests google-genai
+        pip install requests
 
     - name: Executar o Robô
       env:
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python main.py
+      run: python robo_ao_vivo.py
+
+      
