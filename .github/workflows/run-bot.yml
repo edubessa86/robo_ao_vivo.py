@@ -2,7 +2,7 @@ name: Executar Robo de Apostas Ao Vivo
 
 on:
   schedule:
-    # Executa automaticamente a cada 10 minutos
+    # Executa a cada 10 minutos automaticamente
     - cron: '*/10 * * * *'
   workflow_dispatch: # Permite disparar o robô manualmente na aba Actions quando quiser
 
@@ -12,10 +12,10 @@ jobs:
 
     steps:
       - name: Baixar Código do Repositório
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Configurar o Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
