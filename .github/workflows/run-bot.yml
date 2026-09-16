@@ -2,12 +2,12 @@ name: Executar Robo de Apostas Ao Vivo
 
 on:
   schedule:
-    # Executa a cada 10 minutos automaticamente
+    # Executa automaticamente a cada 10 minutos
     - cron: '*/10 * * * *'
-  workflow_dispatch: # Permite rodar manualmente quando quiser
+  workflow_dispatch: # Permite disparar o robô manualmente na aba Actions quando quiser
 
 jobs:
-  run-robot:
+  run-bot:
     runs-on: ubuntu-latest
 
     steps:
@@ -31,4 +31,3 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python robo_ao_vivo.py
-      
