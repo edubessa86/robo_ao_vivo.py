@@ -3,11 +3,32 @@ import re
 import requests
 import concurrent.futures
 from datetime import datetime
+from urllib.parse import quote_plus
 
 # Setups e Variáveis de Ambiente
 API_KEY = os.environ.get("API_FOOTBALL_KEY") or ""
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+# Link base da Superbet (seção de futebol ao vivo).
+# A Superbet não expõe publicamente um parâmetro de busca por confronto/time,
+# então não é possível montar um link que abra direto na página daquele jogo
+# específico sem o ID interno do evento na própria Superbet (que não temos,
+# já que os dados vêm do scraping do livescore.com). Por isso o link aponta
+# para a seção "ao vivo" de futebol, e o texto do alerta orienta o usuário a
+# localizar a partida por lá.
+LINK_SUPERBET_AO_VIVO = "https://superbet.bet.br/apostas/ao-vivo"
+
+
+def gerar_link_superbet(time_casa: str, time_fora: str) -> str:
+    """Gera o link para o usuário localizar o jogo na Superbet.
+
+    Mantido como função (em vez de constante direta) para caso a Superbet
+    passe a suportar busca por querystring no futuro — bastaria trocar o
+    retorno abaixo por algo como:
+        f"{LINK_SUPERBET_AO_VIVO}?busca={quote_plus(time_casa + ' x ' + time_fora)}"
+    """
+    return LINK_SUPERBET_AO_VIVO
 
 
 def enviar_telegram(mensagem: str) -> None:
@@ -21,7 +42,8 @@ def enviar_telegram(mensagem: str) -> None:
     payload = {
         "chat_id": CHAT_ID,
         "text": mensagem,
-        "parse_mode": "HTML"
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
     }
     
     try:
@@ -170,6 +192,9 @@ def analisar_oportunidades_ao_vivo():
             escanteios = jogo.get('stats', {}).get('escanteios')
             cartoes = jogo.get('stats', {}).get('cartoes')
 
+            link_jogo = gerar_link_superbet(time_casa, time_fora)
+            rodape_superbet = f'🔗 <a href="{link_jogo}">Ver este jogo na Superbet</a>'
+
             # ------------------------------------------------------------------
             # 1. ALERTA DE OVER GOLS (Empate ou Diferença de 1 Gol)
             # ------------------------------------------------------------------
@@ -186,12 +211,13 @@ def analisar_oportunidades_ao_vivo():
 📊 <b>PROJEÇÃO DE MERCADO:</b>
 • Mercado: Over Gols (Mais Gols)
 • Linha da Aposta: <b>Over {linha_gols} Gols</b>
-📈 <b>Odd Atual: @{odd_gols:.2f}</b>
+📈 <b>Odd Estimada: @{odd_gols:.2f}</b>
 
 💡 <b>SUGESTÃO DE ENTRADA:</b>
-🔥 <b>Apostar Over {linha_gols} Gols</b> (Odd @{odd_gols:.2f})
+🔥 <b>Apostar Over {linha_gols} Gols</b> (Odd estimada @{odd_gols:.2f})
 <i>Motivo: Partida movimentada no 2º tempo com Odd dentro da margem de valor.</i>
-━━━━━━━━━━━━━━━━━━"""
+━━━━━━━━━━━━━━━━━━
+{rodape_superbet}"""
                 enviar_telegram(alerta_gols)
                 alertas_encontrados += 1
 
@@ -212,12 +238,13 @@ def analisar_oportunidades_ao_vivo():
 • Mercado: Escanteios (Cantos Asiáticos)
 • Escanteios Atuais: {escanteios}
 • Linha da Aposta: <b>Over {linha_escanteios} Escanteios</b>
-📈 <b>Odd Atual: @{odd_escanteios:.2f}</b>
+📈 <b>Odd Estimada: @{odd_escanteios:.2f}</b>
 
 💡 <b>SUGESTÃO DE ENTRADA:</b>
-🔥 <b>Apostar Over {linha_escanteios} Escanteios</b> (Odd @{odd_escanteios:.2f})
+🔥 <b>Apostar Over {linha_escanteios} Escanteios</b> (Odd estimada @{odd_escanteios:.2f})
 <i>Motivo: Volume real de escanteios confirmado no 2º tempo.</i>
-━━━━━━━━━━━━━━━━━━"""
+━━━━━━━━━━━━━━━━━━
+{rodape_superbet}"""
                 enviar_telegram(alerta_escanteios)
                 alertas_encontrados += 1
 
@@ -238,12 +265,13 @@ def analisar_oportunidades_ao_vivo():
 • Mercado: Cartões (Total Amarelos/Vermelhos)
 • Cartões Atuais: {cartoes}
 • Linha da Aposta: <b>Over {linha_cartoes} Cartões</b>
-📈 <b>Odd Atual: @{odd_cartoes:.2f}</b>
+📈 <b>Odd Estimada: @{odd_cartoes:.2f}</b>
 
 💡 <b>SUGESTÃO DE ENTRADA:</b>
-🔥 <b>Apostar Over {linha_cartoes} Cartões</b> (Odd @{odd_cartoes:.2f})
+🔥 <b>Apostar Over {linha_cartoes} Cartões</b> (Odd estimada @{odd_cartoes:.2f})
 <i>Motivo: Jogo truncado no final com histórico real de advertências.</i>
-━━━━━━━━━━━━━━━━━━"""
+━━━━━━━━━━━━━━━━━━
+{rodape_superbet}"""
                 enviar_telegram(alerta_cartoes)
                 alertas_encontrados += 1
 
