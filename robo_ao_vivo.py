@@ -9,21 +9,50 @@ API_KEY = os.environ.get("API_FOOTBALL_KEY") or ""
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+# Link da Sportingbet usado nos alertas (página de apostas Ao Vivo, que é a mesma
+# usada pelo menu do próprio site). Pode ser trocado sem mexer no código, definindo
+# a variável de ambiente SPORTINGBET_URL.
+SPORTINGBET_BASE_URL = os.environ.get(
+    "SPORTINGBET_URL", "https://www.sportingbet.bet.br/pt-br/sports/ao-vivo/aposta"
+)
 
-def enviar_telegram(mensagem: str) -> None:
-    """Envia o alerta formatado em HTML para o canal ou chat do Telegram."""
+AVISO_JOGO_RESPONSAVEL = "🔞 <i>+18 | Aposta não é investimento. Jogue com responsabilidade.</i>"
+
+
+def gerar_link_sportingbet(time_casa: str, time_fora: str) -> str:
+    """
+    Retorna o link da Sportingbet que acompanha o alerta.
+
+    Hoje devolve a página configurada em SPORTINGBET_BASE_URL, porque a Sportingbet
+    identifica cada jogo por um ID interno próprio, que a fonte de dados atual
+    (Livescore) não fornece. Se no futuro você tiver uma fonte que traga esse ID,
+    é só montar a URL do evento aqui dentro que todos os alertas passam a usá-la.
+    """
+    return SPORTINGBET_BASE_URL
+
+
+def enviar_telegram(mensagem: str, link: str = None, texto_botao: str = "🎯 Ver na Sportingbet") -> None:
+    """Envia o alerta formatado em HTML para o canal ou chat do Telegram, com botão de link opcional."""
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print("⚠️ Variáveis TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não configuradas.")
         print("Mensagem emitida no console:\n\n", mensagem)
+        if link:
+            print(f"🔗 Link: {link}")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
         "text": mensagem,
-        "parse_mode": "HTML"
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
     }
-    
+
+    if link:
+        payload["reply_markup"] = {
+            "inline_keyboard": [[{"text": texto_botao, "url": link}]]
+        }
+
     try:
         resposta = requests.post(url, json=payload, timeout=10)
         if resposta.status_code == 200:
@@ -90,7 +119,7 @@ def fonte_web_scraping_publico() -> list:
                     minuto_raw = event.get("Eps", "")
                     minuto_match = re.search(r'\d+', str(minuto_raw))
                     minuto = int(minuto_match.group()) if minuto_match else 0
-                    
+
                     time_casa = event.get("T1", [{}])[0].get("Nm", "Casa")
                     time_fora = event.get("T2", [{}])[0].get("Nm", "Fora")
                     gols_casa = int(event.get("Tr1", 0) or 0)
@@ -127,7 +156,7 @@ def compilar_todas_as_fontes() -> list:
     jogos_brutos = fonte_web_scraping_publico()
     jogos_unicos = []
     chaves_vistas = set()
-    
+
     for j in jogos_brutos:
         casa = j.get("teams", {}).get("home", {}).get("name", "")
         fora = j.get("teams", {}).get("away", {}).get("name", "")
@@ -154,7 +183,7 @@ def analisar_oportunidades_ao_vivo():
     for jogo in jogos:
         status_tempo = jogo.get("fixture", {}).get("status", {})
         minuto = status_tempo.get("elapsed") or 0
-        
+
         # Filtro de janela de tempo segura para apostas ao vivo (entre 55' e 83')
         if not (55 <= minuto <= 83):
             continue
@@ -166,9 +195,13 @@ def analisar_oportunidades_ao_vivo():
             gols_fora = jogo['goals']['away'] if jogo['goals']['away'] is not None else 0
             liga = jogo.get('league', {}).get('name', 'Liga Global')
             pais = jogo.get('league', {}).get('country', 'Mundo')
-            
+
             escanteios = jogo.get('stats', {}).get('escanteios')
             cartoes = jogo.get('stats', {}).get('cartoes')
+
+            # Link/botão da Sportingbet que acompanha os alertas deste jogo
+            link_sportingbet = gerar_link_sportingbet(time_casa, time_fora)
+            texto_botao = "🎯 Ver na Sportingbet"
 
             # ------------------------------------------------------------------
             # 1. ALERTA DE OVER GOLS (Empate ou Diferença de 1 Gol)
@@ -186,13 +219,14 @@ def analisar_oportunidades_ao_vivo():
 📊 <b>PROJEÇÃO DE MERCADO:</b>
 • Mercado: Over Gols (Mais Gols)
 • Linha da Aposta: <b>Over {linha_gols} Gols</b>
-📈 <b>Odd Atual: @{odd_gols:.2f}</b>
+📈 <b>Odd estimada: @{odd_gols:.2f}</b> (confira a odd real na Sportingbet)
 
 💡 <b>SUGESTÃO DE ENTRADA:</b>
 🔥 <b>Apostar Over {linha_gols} Gols</b> (Odd @{odd_gols:.2f})
 <i>Motivo: Partida movimentada no 2º tempo com Odd dentro da margem de valor.</i>
-━━━━━━━━━━━━━━━━━━"""
-                enviar_telegram(alerta_gols)
+━━━━━━━━━━━━━━━━━━
+{AVISO_JOGO_RESPONSAVEL}"""
+                enviar_telegram(alerta_gols, link_sportingbet, texto_botao)
                 alertas_encontrados += 1
 
             # ------------------------------------------------------------------
@@ -212,13 +246,14 @@ def analisar_oportunidades_ao_vivo():
 • Mercado: Escanteios (Cantos Asiáticos)
 • Escanteios Atuais: {escanteios}
 • Linha da Aposta: <b>Over {linha_escanteios} Escanteios</b>
-📈 <b>Odd Atual: @{odd_escanteios:.2f}</b>
+📈 <b>Odd estimada: @{odd_escanteios:.2f}</b> (confira a odd real na Sportingbet)
 
 💡 <b>SUGESTÃO DE ENTRADA:</b>
 🔥 <b>Apostar Over {linha_escanteios} Escanteios</b> (Odd @{odd_escanteios:.2f})
 <i>Motivo: Volume real de escanteios confirmado no 2º tempo.</i>
-━━━━━━━━━━━━━━━━━━"""
-                enviar_telegram(alerta_escanteios)
+━━━━━━━━━━━━━━━━━━
+{AVISO_JOGO_RESPONSAVEL}"""
+                enviar_telegram(alerta_escanteios, link_sportingbet, texto_botao)
                 alertas_encontrados += 1
 
             # ------------------------------------------------------------------
@@ -238,13 +273,14 @@ def analisar_oportunidades_ao_vivo():
 • Mercado: Cartões (Total Amarelos/Vermelhos)
 • Cartões Atuais: {cartoes}
 • Linha da Aposta: <b>Over {linha_cartoes} Cartões</b>
-📈 <b>Odd Atual: @{odd_cartoes:.2f}</b>
+📈 <b>Odd estimada: @{odd_cartoes:.2f}</b> (confira a odd real na Sportingbet)
 
 💡 <b>SUGESTÃO DE ENTRADA:</b>
 🔥 <b>Apostar Over {linha_cartoes} Cartões</b> (Odd @{odd_cartoes:.2f})
 <i>Motivo: Jogo truncado no final com histórico real de advertências.</i>
-━━━━━━━━━━━━━━━━━━"""
-                enviar_telegram(alerta_cartoes)
+━━━━━━━━━━━━━━━━━━
+{AVISO_JOGO_RESPONSAVEL}"""
+                enviar_telegram(alerta_cartoes, link_sportingbet, texto_botao)
                 alertas_encontrados += 1
 
         except Exception as e:
