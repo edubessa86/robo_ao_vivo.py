@@ -14,6 +14,7 @@ AFFILIATE_URL = (
     or os.environ.get("AFFILIATE_LINK")
     or "https://a.bingoem.casa/t/NTk5OTAxXzM=/"
 )
+AFFILIATE_BUTTON_TEXT = os.environ.get("AFFILIATE_BUTTON_TEXT") or "🔗 Aposte com nosso link"
 
 # Link da Sportingbet usado nos alertas (página de apostas Ao Vivo, que é a mesma
 # usada pelo menu do próprio site). Pode ser trocado sem mexer no código, definindo
@@ -26,16 +27,22 @@ AVISO_JOGO_RESPONSAVEL = "🔞 <i>+18 | Aposta não é investimento. Jogue com r
 
 
 def formatar_mensagem_com_afiliado(mensagem: str) -> str:
-    """Acrescenta o código e o link de afiliado ao final da mensagem, se estiver configurado."""
+    """Acrescenta o código e o link de afiliado ao final da mensagem, com formatação profissional."""
     texto = mensagem.rstrip()
 
+    footer_lines = []
+    footer_lines.append("━━━━━━━━━━━━━━━━━━")
+
     if AFFILIATE_CODE and AFFILIATE_CODE.strip():
-        texto = f"{texto}\n\n🔥 Código de afiliado: {AFFILIATE_CODE.strip()}"
+        footer_lines.append(f"🔥 Código de afiliado: <b>{AFFILIATE_CODE.strip()}</b>")
 
     if AFFILIATE_URL and AFFILIATE_URL.strip():
-        texto = f"{texto}\n\n🔗 Link do afiliado: {AFFILIATE_URL.strip()}"
+        footer_lines.append("🔗 Apoie nosso trabalho: use nosso link oficial (sem custo adicional).")
+        footer_lines.append(f"<a href=\"{AFFILIATE_URL.strip()}\">👉 Aposte aqui pelo link do afiliado</a>")
 
-    return texto
+    footer_lines.append(AVISO_JOGO_RESPONSAVEL)
+
+    return f"{texto}\n\n" + "\n".join(footer_lines)
 
 
 def gerar_link_sportingbet(time_casa: str, time_fora: str) -> str:
@@ -51,7 +58,11 @@ def gerar_link_sportingbet(time_casa: str, time_fora: str) -> str:
 
 
 def enviar_telegram(mensagem: str, link: str = None, texto_botao: str = "🎯 Ver na Sportingbet") -> None:
-    """Envia o alerta formatado em HTML para o canal ou chat do Telegram, com botão de link opcional."""
+    """Envia o alerta formatado em HTML para o canal ou chat do Telegram, com botão de link opcional.
+
+    Agora inclui, quando configurado, um botão clicável para o link de afiliado e
+    também coloca o link em uma linha separada no corpo da mensagem para maior visibilidade.
+    """
     mensagem_final = formatar_mensagem_com_afiliado(mensagem)
 
     if not TELEGRAM_TOKEN or not CHAT_ID:
@@ -59,6 +70,8 @@ def enviar_telegram(mensagem: str, link: str = None, texto_botao: str = "🎯 Ve
         print("Mensagem emitida no console:\n\n", mensagem_final)
         if link:
             print(f"🔗 Link: {link}")
+        if AFFILIATE_URL:
+            print(f"🔗 Link afiliado: {AFFILIATE_URL}")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -69,10 +82,15 @@ def enviar_telegram(mensagem: str, link: str = None, texto_botao: str = "🎯 Ve
         "disable_web_page_preview": True,
     }
 
+    buttons_row = []
     if link:
-        payload["reply_markup"] = {
-            "inline_keyboard": [[{"text": texto_botao, "url": link}]]
-        }
+        buttons_row.append({"text": texto_botao, "url": link})
+
+    if AFFILIATE_URL and AFFILIATE_URL.strip():
+        buttons_row.append({"text": AFFILIATE_BUTTON_TEXT, "url": AFFILIATE_URL.strip()})
+
+    if buttons_row:
+        payload["reply_markup"] = {"inline_keyboard": [buttons_row]}
 
     try:
         resposta = requests.post(url, json=payload, timeout=10)
@@ -146,7 +164,6 @@ def fonte_web_scraping_publico() -> list:
                     gols_casa = int(event.get("Tr1", 0) or 0)
                     gols_fora = int(event.get("Tr2", 0) or 0)
 
-                    # Leitura direta sem matemática/estimativas de fallback
                     escanteios_c = event.get("Tr1C")
                     escanteios_f = event.get("Tr2C")
                     escanteios_reais = (int(escanteios_c) + int(escanteios_f)) if (escanteios_c is not None and escanteios_f is not None) else None
@@ -205,7 +222,6 @@ def analisar_oportunidades_ao_vivo():
         status_tempo = jogo.get("fixture", {}).get("status", {})
         minuto = status_tempo.get("elapsed") or 0
 
-        # Filtro de janela de tempo segura para apostas ao vivo (entre 55' e 83')
         if not (55 <= minuto <= 83):
             continue
 
@@ -220,13 +236,9 @@ def analisar_oportunidades_ao_vivo():
             escanteios = jogo.get('stats', {}).get('escanteios')
             cartoes = jogo.get('stats', {}).get('cartoes')
 
-            # Link/botão da Sportingbet que acompanha os alertas deste jogo
             link_sportingbet = gerar_link_sportingbet(time_casa, time_fora)
             texto_botao = "🎯 Ver na Sportingbet"
 
-            # ------------------------------------------------------------------
-            # 1. ALERTA DE OVER GOLS (Empate ou Diferença de 1 Gol)
-            # ------------------------------------------------------------------
             if abs(gols_casa - gols_fora) <= 1:
                 linha_gols = gols_casa + gols_fora + 0.5
                 odd_gols = calcular_odd_gols(minuto)
@@ -250,9 +262,6 @@ def analisar_oportunidades_ao_vivo():
                 enviar_telegram(alerta_gols, link_sportingbet, texto_botao)
                 alertas_encontrados += 1
 
-            # ------------------------------------------------------------------
-            # 2. ALERTA DE ESCANTEIOS (Requer dado real e mínimo de volume)
-            # ------------------------------------------------------------------
             if escanteios is not None and escanteios >= 5 and minuto <= 80:
                 linha_escanteios = escanteios + 1.5
                 odd_escanteios = calcular_odd_escanteios(minuto)
@@ -277,9 +286,6 @@ def analisar_oportunidades_ao_vivo():
                 enviar_telegram(alerta_escanteios, link_sportingbet, texto_botao)
                 alertas_encontrados += 1
 
-            # ------------------------------------------------------------------
-            # 3. ALERTA DE CARTÕES (Requer dado real do jogo)
-            # ------------------------------------------------------------------
             if cartoes is not None and cartoes >= 3 and minuto >= 65 and abs(gols_casa - gols_fora) <= 1:
                 linha_cartoes = cartoes + 1.5
                 odd_cartoes = calcular_odd_cartoes(minuto)
