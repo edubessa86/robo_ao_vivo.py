@@ -8,6 +8,7 @@ from datetime import datetime
 API_KEY = os.environ.get("API_FOOTBALL_KEY") or ""
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+AFFILIATE_CODE = os.environ.get("AFFILIATE_CODE") or os.environ.get("CODIGO_AFILIADO") or ""
 
 # Link da Sportingbet usado nos alertas (página de apostas Ao Vivo, que é a mesma
 # usada pelo menu do próprio site). Pode ser trocado sem mexer no código, definindo
@@ -17,6 +18,18 @@ SPORTINGBET_BASE_URL = os.environ.get(
 )
 
 AVISO_JOGO_RESPONSAVEL = "🔞 <i>+18 | Aposta não é investimento. Jogue com responsabilidade.</i>"
+
+
+def formatar_mensagem_com_afiliado(mensagem: str) -> str:
+    """Acrescenta o código de afiliado ao final da mensagem, se estiver configurado."""
+    if not AFFILIATE_CODE:
+        return mensagem
+
+    codigo = AFFILIATE_CODE.strip()
+    if not codigo:
+        return mensagem
+
+    return f"{mensagem.rstrip()}\n\n🔥 Código de afiliado: {codigo}"
 
 
 def gerar_link_sportingbet(time_casa: str, time_fora: str) -> str:
@@ -33,9 +46,11 @@ def gerar_link_sportingbet(time_casa: str, time_fora: str) -> str:
 
 def enviar_telegram(mensagem: str, link: str = None, texto_botao: str = "🎯 Ver na Sportingbet") -> None:
     """Envia o alerta formatado em HTML para o canal ou chat do Telegram, com botão de link opcional."""
+    mensagem_final = formatar_mensagem_com_afiliado(mensagem)
+
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print("⚠️ Variáveis TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não configuradas.")
-        print("Mensagem emitida no console:\n\n", mensagem)
+        print("Mensagem emitida no console:\n\n", mensagem_final)
         if link:
             print(f"🔗 Link: {link}")
         return
@@ -43,7 +58,7 @@ def enviar_telegram(mensagem: str, link: str = None, texto_botao: str = "🎯 Ve
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
-        "text": mensagem,
+        "text": mensagem_final,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
