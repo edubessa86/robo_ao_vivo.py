@@ -16,13 +16,6 @@ AFFILIATE_URL = (
 )
 AFFILIATE_BUTTON_TEXT = os.environ.get("AFFILIATE_BUTTON_TEXT") or "🔗 Aposte com nosso link"
 
-# Link da Sportingbet usado nos alertas (página de apostas Ao Vivo, que é a mesma
-# usada pelo menu do próprio site). Pode ser trocado sem mexer no código, definindo
-# a variável de ambiente SPORTINGBET_URL.
-SPORTINGBET_BASE_URL = os.environ.get(
-    "SPORTINGBET_URL", "https://www.sportingbet.bet.br/pt-br/sports/ao-vivo/aposta"
-)
-
 AVISO_JOGO_RESPONSAVEL = "🔞 <i>+18 | Aposta não é investimento. Jogue com responsabilidade.</i>"
 
 
@@ -45,34 +38,27 @@ def formatar_mensagem_com_afiliado(mensagem: str) -> str:
     return f"{texto}\n\n" + "\n".join(footer_lines)
 
 
-def gerar_link_sportingbet(time_casa: str, time_fora: str) -> str:
-    """
-    Retorna o link da Sportingbet que acompanha o alerta.
+# ==============================================================================
+# FUNÇÕES DE ENVIO (TELEGRAM)
+# ==============================================================================
 
-    Hoje devolve a página configurada em SPORTINGBET_BASE_URL, porque a Sportingbet
-    identifica cada jogo por um ID interno próprio, que a fonte de dados atual
-    (Livescore) não fornece. Se no futuro você tiver uma fonte que traga esse ID,
-    é só montar a URL do evento aqui dentro que todos os alertas passam a usá-la.
-    """
-    return SPORTINGBET_BASE_URL
-
-
-def enviar_telegram(mensagem: str, link: str = None, texto_botao: str = "🎯 Ver na Sportingbet") -> None:
+def enviar_telegram(mensagem: str, link: str = None, texto_botao: str = None) -> None:
     """Envia o alerta formatado em HTML para o canal ou chat do Telegram, com botão de link opcional.
 
-    Agora inclui, quando configurado, um botão clicável para o link de afiliado e
-    também coloca o link em uma linha separada no corpo da mensagem para maior visibilidade.
+    Removida a referência à Sportingbet: agora usamos somente o link de afiliado
+    (se configurado) e mostramos o link em destaque no corpo da mensagem.
     """
     mensagem_final = formatar_mensagem_com_afiliado(mensagem)
 
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print("⚠️ Variáveis TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não configuradas.")
         print("Mensagem emitida no console:\n\n", mensagem_final)
-        if link:
-            print(f"🔗 Link: {link}")
         if AFFILIATE_URL:
             print(f"🔗 Link afiliado: {AFFILIATE_URL}")
         return
+
+    if texto_botao is None:
+        texto_botao = AFFILIATE_BUTTON_TEXT
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -82,15 +68,9 @@ def enviar_telegram(mensagem: str, link: str = None, texto_botao: str = "🎯 Ve
         "disable_web_page_preview": True,
     }
 
-    buttons_row = []
-    if link:
-        buttons_row.append({"text": texto_botao, "url": link})
-
+    # Somente o botão de afiliado (se configurado)
     if AFFILIATE_URL and AFFILIATE_URL.strip():
-        buttons_row.append({"text": AFFILIATE_BUTTON_TEXT, "url": AFFILIATE_URL.strip()})
-
-    if buttons_row:
-        payload["reply_markup"] = {"inline_keyboard": [buttons_row]}
+        payload["reply_markup"] = {"inline_keyboard": [[{"text": texto_botao, "url": AFFILIATE_URL.strip()}]]}
 
     try:
         resposta = requests.post(url, json=payload, timeout=10)
@@ -236,8 +216,7 @@ def analisar_oportunidades_ao_vivo():
             escanteios = jogo.get('stats', {}).get('escanteios')
             cartoes = jogo.get('stats', {}).get('cartoes')
 
-            link_sportingbet = gerar_link_sportingbet(time_casa, time_fora)
-            texto_botao = "🎯 Ver na Sportingbet"
+            texto_botao = AFFILIATE_BUTTON_TEXT
 
             if abs(gols_casa - gols_fora) <= 1:
                 linha_gols = gols_casa + gols_fora + 0.5
@@ -252,14 +231,14 @@ def analisar_oportunidades_ao_vivo():
 📊 <b>PROJEÇÃO DE MERCADO:</b>
 • Mercado: Over Gols (Mais Gols)
 • Linha da Aposta: <b>Over {linha_gols} Gols</b>
-📈 <b>Odd estimada: @{odd_gols:.2f}</b> (confira a odd real na Sportingbet)
+📈 <b>Odd estimada: @{odd_gols:.2f}</b>
 
 💡 <b>SUGESTÃO DE ENTRADA:</b>
 🔥 <b>Apostar Over {linha_gols} Gols</b> (Odd @{odd_gols:.2f})
 <i>Motivo: Partida movimentada no 2º tempo com Odd dentro da margem de valor.</i>
 ━━━━━━━━━━━━━━━━━━
 {AVISO_JOGO_RESPONSAVEL}"""
-                enviar_telegram(alerta_gols, link_sportingbet, texto_botao)
+                enviar_telegram(alerta_gols, None, texto_botao)
                 alertas_encontrados += 1
 
             if escanteios is not None and escanteios >= 5 and minuto <= 80:
@@ -276,14 +255,14 @@ def analisar_oportunidades_ao_vivo():
 • Mercado: Escanteios (Cantos Asiáticos)
 • Escanteios Atuais: {escanteios}
 • Linha da Aposta: <b>Over {linha_escanteios} Escanteios</b>
-📈 <b>Odd estimada: @{odd_escanteios:.2f}</b> (confira a odd real na Sportingbet)
+📈 <b>Odd estimada: @{odd_escanteios:.2f}</b>
 
 💡 <b>SUGESTÃO DE ENTRADA:</b>
 🔥 <b>Apostar Over {linha_escanteios} Escanteios</b> (Odd @{odd_escanteios:.2f})
 <i>Motivo: Volume real de escanteios confirmado no 2º tempo.</i>
 ━━━━━━━━━━━━━━━━━━
 {AVISO_JOGO_RESPONSAVEL}"""
-                enviar_telegram(alerta_escanteios, link_sportingbet, texto_botao)
+                enviar_telegram(alerta_escanteios, None, texto_botao)
                 alertas_encontrados += 1
 
             if cartoes is not None and cartoes >= 3 and minuto >= 65 and abs(gols_casa - gols_fora) <= 1:
@@ -300,14 +279,14 @@ def analisar_oportunidades_ao_vivo():
 • Mercado: Cartões (Total Amarelos/Vermelhos)
 • Cartões Atuais: {cartoes}
 • Linha da Aposta: <b>Over {linha_cartoes} Cartões</b>
-📈 <b>Odd estimada: @{odd_cartoes:.2f}</b> (confira a odd real na Sportingbet)
+📈 <b>Odd estimada: @{odd_cartoes:.2f}</b>
 
 💡 <b>SUGESTÃO DE ENTRADA:</b>
 🔥 <b>Apostar Over {linha_cartoes} Cartões</b> (Odd @{odd_cartoes:.2f})
 <i>Motivo: Jogo truncado no final com histórico real de advertências.</i>
 ━━━━━━━━━━━━━━━━━━
 {AVISO_JOGO_RESPONSAVEL}"""
-                enviar_telegram(alerta_cartoes, link_sportingbet, texto_botao)
+                enviar_telegram(alerta_cartoes, None, texto_botao)
                 alertas_encontrados += 1
 
         except Exception as e:
