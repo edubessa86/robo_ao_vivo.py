@@ -9,6 +9,11 @@ API_KEY = os.environ.get("API_FOOTBALL_KEY") or ""
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 AFFILIATE_CODE = os.environ.get("AFFILIATE_CODE") or os.environ.get("CODIGO_AFILIADO") or ""
+AFFILIATE_URL = (
+    os.environ.get("AFFILIATE_URL")
+    or os.environ.get("AFFILIATE_LINK")
+    or "https://a.bingoem.casa/t/NTk5OTAxXzM=/"
+)
 
 # Link da Sportingbet usado nos alertas (página de apostas Ao Vivo, que é a mesma
 # usada pelo menu do próprio site). Pode ser trocado sem mexer no código, definindo
@@ -21,15 +26,16 @@ AVISO_JOGO_RESPONSAVEL = "🔞 <i>+18 | Aposta não é investimento. Jogue com r
 
 
 def formatar_mensagem_com_afiliado(mensagem: str) -> str:
-    """Acrescenta o código de afiliado ao final da mensagem, se estiver configurado."""
-    if not AFFILIATE_CODE:
-        return mensagem
+    """Acrescenta o código e o link de afiliado ao final da mensagem, se estiver configurado."""
+    texto = mensagem.rstrip()
 
-    codigo = AFFILIATE_CODE.strip()
-    if not codigo:
-        return mensagem
+    if AFFILIATE_CODE and AFFILIATE_CODE.strip():
+        texto = f"{texto}\n\n🔥 Código de afiliado: {AFFILIATE_CODE.strip()}"
 
-    return f"{mensagem.rstrip()}\n\n🔥 Código de afiliado: {codigo}"
+    if AFFILIATE_URL and AFFILIATE_URL.strip():
+        texto = f"{texto}\n\n🔗 Link do afiliado: {AFFILIATE_URL.strip()}"
+
+    return texto
 
 
 def gerar_link_sportingbet(time_casa: str, time_fora: str) -> str:
