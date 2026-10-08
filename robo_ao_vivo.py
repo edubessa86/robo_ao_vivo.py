@@ -91,10 +91,10 @@ def calcular_odd_gols(minuto: int) -> float:
         return 1.65
     elif 60 <= minuto <= 75:
         return round(1.70 + ((minuto - 60) * 0.03), 2)
-    elif 75 < minuto <= 85:
+    elif 75 < minuto <= 80:
         return round(2.15 + ((minuto - 75) * 0.08), 2)
     else:
-        return round(3.00 + ((minuto - 85) * 0.15), 2)
+        return round(3.00 + ((minuto - 80) * 0.15), 2)
 
 
 def calcular_odd_escanteios(minuto: int) -> float:
@@ -109,10 +109,10 @@ def calcular_odd_escanteios(minuto: int) -> float:
 def calcular_odd_cartoes(minuto: int) -> float:
     if minuto < 70:
         return 1.85
-    elif 70 <= minuto <= 82:
+    elif 70 <= minuto <= 80:
         return round(1.90 + ((minuto - 70) * 0.04), 2)
     else:
-        return round(2.40 + ((minuto - 82) * 0.08), 2)
+        return round(2.40 + ((minuto - 80) * 0.08), 2)
 
 
 # ==============================================================================
@@ -202,7 +202,7 @@ def analisar_oportunidades_ao_vivo():
         status_tempo = jogo.get("fixture", {}).get("status", {})
         minuto = status_tempo.get("elapsed") or 0
 
-        if not (55 <= minuto <= 83):
+        if not (55 <= minuto <= 80):
             continue
 
         try:
